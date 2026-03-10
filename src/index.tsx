@@ -95,13 +95,29 @@ app.post('/api/sites', async (c) => {
 app.get('/api/workers', async (c) => {
   const { DB } = c.env
   const siteId = c.req.query('site_id')
+  const status  = c.req.query('status')
   try {
-    let query = `SELECT w.*, s.name as site_name FROM workers w JOIN sites s ON w.site_id=s.id`
+    let query = `SELECT w.*, s.name as site_name FROM workers w JOIN sites s ON w.site_id=s.id WHERE 1=1`
     const params: any[] = []
-    if (siteId) { query += ' WHERE w.site_id=?'; params.push(siteId) }
+    if (siteId) { query += ' AND w.site_id=?'; params.push(siteId) }
+    if (status)  { query += ' AND w.status=?';  params.push(status) }
     query += ' ORDER BY w.created_at DESC'
     const result = await DB.prepare(query).bind(...params).all()
     return c.json(result.results)
+  } catch(e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+app.get('/api/workers/:id', async (c) => {
+  const { DB } = c.env
+  const id = c.req.param('id')
+  try {
+    const result = await DB.prepare(
+      'SELECT w.*, s.name as site_name FROM workers w JOIN sites s ON w.site_id=s.id WHERE w.id=?'
+    ).bind(id).first()
+    if (!result) return c.json({ error: 'Not found' }, 404)
+    return c.json(result)
   } catch(e: any) {
     return c.json({ error: e.message }, 500)
   }
@@ -112,9 +128,34 @@ app.post('/api/workers', async (c) => {
   const body = await c.req.json()
   try {
     const result = await DB.prepare(
-      `INSERT INTO workers (site_id, name, employee_id, position, department, phone, emergency_contact, safety_training_date, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(body.site_id, body.name, body.employee_id, body.position, body.department||null, body.phone||null, body.emergency_contact||null, body.safety_training_date||null, body.status||'active').run()
+      `INSERT INTO workers (
+        site_id, employee_id, name, hire_date, age, career_years,
+        job_type, company, phone,
+        training_expire_date,
+        pre_placement_health_check_date,
+        special_health_check_date, special_health_check_expire_date,
+        general_health_check_date, general_health_check_expire_date,
+        safety_edu_reg_no, status
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).bind(
+      body.site_id,
+      body.employee_id,
+      body.name,
+      body.hire_date || null,
+      body.age ? Number(body.age) : null,
+      body.career_years ? Number(body.career_years) : null,
+      body.job_type || null,
+      body.company || null,
+      body.phone || null,
+      body.training_expire_date || null,
+      body.pre_placement_health_check_date || null,
+      body.special_health_check_date || null,
+      body.special_health_check_expire_date || null,
+      body.general_health_check_date || null,
+      body.general_health_check_expire_date || null,
+      body.safety_edu_reg_no || null,
+      body.status || 'active'
+    ).run()
     return c.json({ id: result.meta.last_row_id, ...body })
   } catch(e: any) {
     return c.json({ error: e.message }, 500)
@@ -127,8 +168,36 @@ app.put('/api/workers/:id', async (c) => {
   const body = await c.req.json()
   try {
     await DB.prepare(
-      `UPDATE workers SET site_id=?, name=?, employee_id=?, position=?, department=?, phone=?, emergency_contact=?, safety_training_date=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
-    ).bind(body.site_id, body.name, body.employee_id, body.position, body.department||null, body.phone||null, body.emergency_contact||null, body.safety_training_date||null, body.status||'active', id).run()
+      `UPDATE workers SET
+        site_id=?, employee_id=?, name=?, hire_date=?, age=?, career_years=?,
+        job_type=?, company=?, phone=?,
+        training_expire_date=?,
+        pre_placement_health_check_date=?,
+        special_health_check_date=?, special_health_check_expire_date=?,
+        general_health_check_date=?, general_health_check_expire_date=?,
+        safety_edu_reg_no=?, status=?,
+        updated_at=CURRENT_TIMESTAMP
+       WHERE id=?`
+    ).bind(
+      body.site_id,
+      body.employee_id,
+      body.name,
+      body.hire_date || null,
+      body.age ? Number(body.age) : null,
+      body.career_years ? Number(body.career_years) : null,
+      body.job_type || null,
+      body.company || null,
+      body.phone || null,
+      body.training_expire_date || null,
+      body.pre_placement_health_check_date || null,
+      body.special_health_check_date || null,
+      body.special_health_check_expire_date || null,
+      body.general_health_check_date || null,
+      body.general_health_check_expire_date || null,
+      body.safety_edu_reg_no || null,
+      body.status || 'active',
+      id
+    ).run()
     return c.json({ id, ...body })
   } catch(e: any) {
     return c.json({ error: e.message }, 500)
