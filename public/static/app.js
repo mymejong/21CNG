@@ -326,6 +326,7 @@ function renderWorkersContent(workers) {
           <tr>
             <th class="text-center px-3 py-3 text-gray-600 font-semibold whitespace-nowrap">사번</th>
             <th class="text-center px-3 py-3 text-gray-600 font-semibold whitespace-nowrap">이름</th>
+            <th class="text-center px-3 py-3 text-gray-600 font-semibold whitespace-nowrap">주민등록번호</th>
             <th class="text-center px-3 py-3 text-gray-600 font-semibold whitespace-nowrap">입사일자</th>
             <th class="text-center px-3 py-3 text-gray-600 font-semibold whitespace-nowrap">나이</th>
             <th class="text-center px-3 py-3 text-gray-600 font-semibold whitespace-nowrap">경력(년)</th>
@@ -356,7 +357,7 @@ function renderWorkersContent(workers) {
 function renderWorkersRows(workers) {
   if (!workers.length) return `
     <tr>
-      <td colspan="17" class="text-center py-12 text-gray-400">
+      <td colspan="18" class="text-center py-12 text-gray-400">
         <i class="fas fa-users text-4xl mb-3 block"></i>
         등록된 작업자가 없습니다
       </td>
@@ -376,6 +377,7 @@ function renderWorkersRows(workers) {
           ${w.name}
         </div>
       </td>
+      <td class="px-3 py-2.5 text-center text-gray-600 whitespace-nowrap">${w.resident_number ? maskResidentNumber(w.resident_number) : '-'}</td>
       <td class="px-3 py-2.5 text-center text-gray-600 whitespace-nowrap">${formatDate(w.hire_date)}</td>
       <td class="px-3 py-2.5 text-center text-gray-700">${w.age != null ? w.age + '세' : '-'}</td>
       <td class="px-3 py-2.5 text-center text-gray-700">${w.career_years != null ? w.career_years + '년' : '-'}</td>
@@ -404,6 +406,16 @@ function renderWorkersRows(workers) {
       </td>
     </tr>`;
   }).join('');
+}
+
+function maskResidentNumber(num) {
+  if (!num) return '-';
+  // 000000-0000000 형식에서 뒷자리 마스킹
+  const clean = num.replace(/-/g, '');
+  if (clean.length >= 7) {
+    return clean.slice(0,6) + '-' + clean[6] + '******';
+  }
+  return num;
 }
 
 function applyWorkerFilter() {
@@ -444,6 +456,11 @@ function showWorkerForm(worker = null) {
         <div>
           <label class="block text-xs font-medium text-gray-600 mb-1">이름 *</label>
           <input class="form-input" name="name" value="${worker?.name || ''}" required placeholder="홍길동">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">주민등록번호</label>
+          <input class="form-input" name="resident_number" value="${worker?.resident_number || ''}" placeholder="000000-0000000" maxlength="14"
+            oninput="this.value=this.value.replace(/[^0-9-]/g,'').replace(/^(\d{6})(?!-)(\d)/,'$1-$2')">
         </div>
         <div>
           <label class="block text-xs font-medium text-gray-600 mb-1">입사일자</label>

@@ -129,18 +129,19 @@ app.post('/api/workers', async (c) => {
   try {
     const result = await DB.prepare(
       `INSERT INTO workers (
-        site_id, employee_id, name, hire_date, age, career_years,
+        site_id, employee_id, name, resident_number, hire_date, age, career_years,
         job_type, company, phone,
         training_expire_date,
         pre_placement_health_check_date,
         special_health_check_date, special_health_check_expire_date,
         general_health_check_date, general_health_check_expire_date,
         safety_edu_reg_no, status
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(
       body.site_id,
       body.employee_id,
       body.name,
+      body.resident_number || null,
       body.hire_date || null,
       body.age ? Number(body.age) : null,
       body.career_years ? Number(body.career_years) : null,
@@ -169,7 +170,7 @@ app.put('/api/workers/:id', async (c) => {
   try {
     await DB.prepare(
       `UPDATE workers SET
-        site_id=?, employee_id=?, name=?, hire_date=?, age=?, career_years=?,
+        site_id=?, employee_id=?, name=?, resident_number=?, hire_date=?, age=?, career_years=?,
         job_type=?, company=?, phone=?,
         training_expire_date=?,
         pre_placement_health_check_date=?,
@@ -182,6 +183,7 @@ app.put('/api/workers/:id', async (c) => {
       body.site_id,
       body.employee_id,
       body.name,
+      body.resident_number || null,
       body.hire_date || null,
       body.age ? Number(body.age) : null,
       body.career_years ? Number(body.career_years) : null,
