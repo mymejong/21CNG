@@ -57,7 +57,7 @@ function formatDate(d) {
 function navigate(page) {
   currentPage = page;
   document.querySelectorAll('.sidebar-link').forEach(l => l.classList.remove('active'));
-  const links = { dashboard: 0, workers: 1, hazards: 2, incidents: 3, inspections: 4, trainings: 5 };
+  const links = { dashboard: 0, workers: 1, hazards: 2, incidents: 3, inspections: 4, trainings: 5, riskAssessments: 6, periodicAssessments: 7, adhocAssessments: 8 };
   const allLinks = document.querySelectorAll('.sidebar-link');
   if (links[page] !== undefined) allLinks[links[page]]?.classList.add('active');
 
@@ -68,12 +68,15 @@ function navigate(page) {
     incidents: ['사고 보고', '사고 및 아차사고 보고 관리'],
     inspections: ['안전점검', '현장 안전점검 체크리스트'],
     trainings: ['안전교육', '안전교육 실시 기록 관리'],
+    riskAssessments: ['위험성평가(최초)', '작업별 위험성 발굴 및 감소대책 수립'],
+    periodicAssessments: ['위험성평가(정기)', '주기별 정기 위험성평가 관리'],
+    adhocAssessments: ['위험성평가(수시)', '변경사항 발생 시 수시 위험성평가 관리'],
   };
   const [title, subtitle] = titles[page] || ['페이지', ''];
   document.getElementById('page-title').textContent = title;
   document.getElementById('page-subtitle').textContent = subtitle;
 
-  const pageRenderers = { dashboard: renderDashboard, workers: renderWorkers, hazards: renderHazards, incidents: renderIncidents, inspections: renderInspections, trainings: renderTrainings };
+  const pageRenderers = { dashboard: renderDashboard, workers: renderWorkers, hazards: renderHazards, incidents: renderIncidents, inspections: renderInspections, trainings: renderTrainings, riskAssessments: renderRiskAssessments, periodicAssessments: renderPeriodicAssessments, adhocAssessments: renderAdhocAssessments };
   document.getElementById('main-content').className = 'page-content';
   if (pageRenderers[page]) pageRenderers[page]();
   return false;
@@ -326,6 +329,7 @@ function renderWorkersContent(workers) {
           <tr>
             <th class="text-center px-3 py-3 text-gray-600 font-semibold whitespace-nowrap">사번</th>
             <th class="text-center px-3 py-3 text-gray-600 font-semibold whitespace-nowrap">이름</th>
+            <th class="text-center px-3 py-3 text-gray-600 font-semibold whitespace-nowrap">주민등록번호</th>
             <th class="text-center px-3 py-3 text-gray-600 font-semibold whitespace-nowrap">입사일자</th>
             <th class="text-center px-3 py-3 text-gray-600 font-semibold whitespace-nowrap">나이</th>
             <th class="text-center px-3 py-3 text-gray-600 font-semibold whitespace-nowrap">경력(년)</th>
@@ -356,7 +360,7 @@ function renderWorkersContent(workers) {
 function renderWorkersRows(workers) {
   if (!workers.length) return `
     <tr>
-      <td colspan="17" class="text-center py-12 text-gray-400">
+      <td colspan="18" class="text-center py-12 text-gray-400">
         <i class="fas fa-users text-4xl mb-3 block"></i>
         등록된 작업자가 없습니다
       </td>
@@ -376,6 +380,7 @@ function renderWorkersRows(workers) {
           ${w.name}
         </div>
       </td>
+      <td class="px-3 py-2.5 text-center text-gray-600 whitespace-nowrap">${w.resident_number ? maskResidentNumber(w.resident_number) : '-'}</td>
       <td class="px-3 py-2.5 text-center text-gray-600 whitespace-nowrap">${formatDate(w.hire_date)}</td>
       <td class="px-3 py-2.5 text-center text-gray-700">${w.age != null ? w.age + '세' : '-'}</td>
       <td class="px-3 py-2.5 text-center text-gray-700">${w.career_years != null ? w.career_years + '년' : '-'}</td>
@@ -404,6 +409,16 @@ function renderWorkersRows(workers) {
       </td>
     </tr>`;
   }).join('');
+}
+
+function maskResidentNumber(num) {
+  if (!num) return '-';
+  // 000000-0000000 형식에서 뒷자리 마스킹
+  const clean = num.replace(/-/g, '');
+  if (clean.length >= 7) {
+    return clean.slice(0,6) + '-' + clean[6] + '******';
+  }
+  return num;
 }
 
 function applyWorkerFilter() {
@@ -444,6 +459,11 @@ function showWorkerForm(worker = null) {
         <div>
           <label class="block text-xs font-medium text-gray-600 mb-1">이름 *</label>
           <input class="form-input" name="name" value="${worker?.name || ''}" required placeholder="홍길동">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">주민등록번호</label>
+          <input class="form-input" name="resident_number" value="${worker?.resident_number || ''}" placeholder="000000-0000000" maxlength="14"
+            oninput="this.value=this.value.replace(/[^0-9-]/g,'').replace(/^(\d{6})(?!-)(\d)/,'$1-$2')">
         </div>
         <div>
           <label class="block text-xs font-medium text-gray-600 mb-1">입사일자</label>
@@ -1284,3 +1304,1699 @@ async function deleteTraining(id) {
 
 // ==================== 초기 실행 ====================
 navigate('dashboard');
+
+// ==================== 위험성평가(최초) ====================
+
+const RISK_LEVEL_MAP = {
+  very_high: { label: '매우높음', cls: 'bg-red-100 text-red-700 border border-red-300', dot: 'bg-red-500' },
+  high:      { label: '높음',     cls: 'bg-orange-100 text-orange-700 border border-orange-300', dot: 'bg-orange-500' },
+  medium:    { label: '보통',     cls: 'bg-yellow-100 text-yellow-700 border border-yellow-300', dot: 'bg-yellow-400' },
+  low:       { label: '낮음',     cls: 'bg-green-100 text-green-700 border border-green-300', dot: 'bg-green-500' },
+};
+
+const RA_STATUS_MAP = {
+  draft:       { label: '작성중',  cls: 'bg-gray-100 text-gray-600' },
+  in_progress: { label: '검토중',  cls: 'bg-blue-100 text-blue-700' },
+  completed:   { label: '완료',    cls: 'bg-green-100 text-green-700' },
+  approved:    { label: '승인됨',  cls: 'bg-purple-100 text-purple-700' },
+};
+
+function calcRiskLevel(freq, intensity) {
+  const score = freq * intensity;
+  if (score >= 15) return 'very_high';
+  if (score >= 9)  return 'high';
+  if (score >= 4)  return 'medium';
+  return 'low';
+}
+
+function riskLevelBadge(level) {
+  const r = RISK_LEVEL_MAP[level] || RISK_LEVEL_MAP.low;
+  return `<span class="text-xs px-2 py-0.5 rounded-full font-semibold ${r.cls}">${r.label}</span>`;
+}
+
+function raStatusBadge(s) {
+  const r = RA_STATUS_MAP[s] || RA_STATUS_MAP.draft;
+  return `<span class="text-xs px-2 py-0.5 rounded-full font-medium ${r.cls}">${r.label}</span>`;
+}
+
+async function renderRiskAssessments() {
+  showLoading();
+  try {
+    const [raRes, sitesRes] = await Promise.all([
+      API.get('/risk-assessments', { params: { assessment_type: 'initial' } }),
+      API.get('/sites')
+    ]);
+    sites = sitesRes.data;
+    window._raData = raRes.data;
+    renderRiskAssessmentsContent(raRes.data);
+  } catch(e) {
+    document.getElementById('main-content').innerHTML = `<div class="text-red-500 p-4">오류: ${e.message}</div>`;
+  }
+}
+
+function renderRiskAssessmentsContent(list) {
+  const counts = { total: list.length, draft: 0, in_progress: 0, completed: 0, approved: 0 };
+  list.forEach(r => { if (counts[r.status] !== undefined) counts[r.status]++; });
+
+  const html = `
+  <!-- 상단 요약 카드 -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+    <div class="card p-4 flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-blue-100 flex items-center justify-center">
+        <i class="fas fa-file-alt text-blue-600 text-lg"></i>
+      </div>
+      <div><div class="text-2xl font-bold text-gray-800">${counts.total}</div><div class="text-xs text-gray-500">전체</div></div>
+    </div>
+    <div class="card p-4 flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-gray-100 flex items-center justify-center">
+        <i class="fas fa-pencil-alt text-gray-500 text-lg"></i>
+      </div>
+      <div><div class="text-2xl font-bold text-gray-700">${counts.draft}</div><div class="text-xs text-gray-500">작성중</div></div>
+    </div>
+    <div class="card p-4 flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-green-100 flex items-center justify-center">
+        <i class="fas fa-check-circle text-green-600 text-lg"></i>
+      </div>
+      <div><div class="text-2xl font-bold text-green-700">${counts.completed}</div><div class="text-xs text-gray-500">완료</div></div>
+    </div>
+    <div class="card p-4 flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-purple-100 flex items-center justify-center">
+        <i class="fas fa-stamp text-purple-600 text-lg"></i>
+      </div>
+      <div><div class="text-2xl font-bold text-purple-700">${counts.approved}</div><div class="text-xs text-gray-500">승인됨</div></div>
+    </div>
+  </div>
+
+  <!-- 필터 & 등록 버튼 -->
+  <div class="flex flex-wrap gap-2 justify-between items-center mb-4">
+    <div class="flex gap-2 flex-wrap">
+      <select id="ra-site-filter" class="form-input w-auto text-sm" onchange="applyRaFilter()">
+        <option value="">전체 현장</option>
+        ${sites.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
+      </select>
+      <select id="ra-status-filter" class="form-input w-auto text-sm" onchange="applyRaFilter()">
+        <option value="">전체 상태</option>
+        <option value="draft">작성중</option>
+        <option value="in_progress">검토중</option>
+        <option value="completed">완료</option>
+        <option value="approved">승인됨</option>
+      </select>
+    </div>
+    <button class="btn-primary text-sm" onclick="showRaForm()">
+      <i class="fas fa-plus mr-1"></i>위험성평가 등록
+    </button>
+  </div>
+
+  <!-- 목록 -->
+  <div class="card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 border-b">
+          <tr>
+            <th class="text-left px-4 py-3 text-gray-600 font-semibold">공종</th>
+            <th class="text-left px-4 py-3 text-gray-600 font-semibold">작업내용</th>
+            <th class="text-left px-4 py-3 text-gray-600 font-semibold">중점위험요인</th>
+            <th class="text-center px-4 py-3 text-gray-600 font-semibold">빈도</th>
+            <th class="text-center px-4 py-3 text-gray-600 font-semibold">강도</th>
+            <th class="text-center px-4 py-3 text-gray-600 font-semibold">등급</th>
+            <th class="text-left px-4 py-3 text-gray-600 font-semibold">구체적개선대책</th>
+            <th class="text-left px-4 py-3 text-gray-600 font-semibold">평가일</th>
+            <th class="text-left px-4 py-3 text-gray-600 font-semibold">평가자</th>
+            <th class="text-left px-4 py-3 text-gray-600 font-semibold">상태</th>
+            <th class="text-left px-4 py-3 text-gray-600 font-semibold">관리</th>
+          </tr>
+        </thead>
+        <tbody id="ra-tbody">
+          ${renderRaRows(list)}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+
+  document.getElementById('main-content').innerHTML = html;
+}
+
+function renderRaRows(list) {
+  if (!list.length) return `
+    <tr><td colspan="11" class="text-center py-12 text-gray-400">
+      <i class="fas fa-search text-4xl mb-3 block"></i>등록된 위험성평가가 없습니다
+    </td></tr>`;
+
+  return list.map(r => {
+    const rLevel = RISK_LEVEL_MAP[r.risk_grade] || RISK_LEVEL_MAP.low;
+    return `
+  <tr class="table-row border-b border-gray-100 hover:bg-blue-50/30 cursor-pointer" onclick="openRaDetail(${r.id})">
+    <td class="px-4 py-3 text-gray-700 font-medium whitespace-nowrap">${r.work_category || '-'}</td>
+    <td class="px-4 py-3 font-medium text-blue-700 hover:underline">${r.title}</td>
+    <td class="px-4 py-3 text-gray-600 text-sm max-w-48"><div class="line-clamp-2">${r.key_hazard || '-'}</div></td>
+    <td class="px-4 py-3 text-center text-gray-700 font-semibold">${r.frequency || 1}</td>
+    <td class="px-4 py-3 text-center text-gray-700 font-semibold">${r.intensity || 1}</td>
+    <td class="px-4 py-3 text-center">
+      <span class="text-xs px-2 py-0.5 rounded-full font-semibold ${rLevel.cls}">${rLevel.label}</span>
+    </td>
+    <td class="px-4 py-3 text-gray-600 text-sm max-w-56"><div class="line-clamp-2">${r.specific_countermeasure || '-'}</div></td>
+    <td class="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">${formatDate(r.assessment_date)}</td>
+    <td class="px-4 py-3 text-gray-700 whitespace-nowrap">${r.assessor}</td>
+    <td class="px-4 py-3">${raStatusBadge(r.status)}</td>
+    <td class="px-4 py-3" onclick="event.stopPropagation()">
+      <div class="flex gap-1">
+        <button class="text-blue-500 hover:text-blue-700 p-1 rounded hover:bg-blue-50"
+          onclick='showRaForm(${JSON.stringify(r).replace(/'/g,"&#39;")})'>
+          <i class="fas fa-edit"></i>
+        </button>
+        <button class="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50"
+          onclick="deleteRa(${r.id})">
+          <i class="fas fa-trash"></i>
+        </button>
+      </div>
+    </td>
+  </tr>`;
+  }).join('');
+}
+
+function applyRaFilter() {
+  const siteId = document.getElementById('ra-site-filter')?.value || '';
+  const status = document.getElementById('ra-status-filter')?.value || '';
+  let filtered = window._raData || [];
+  if (siteId)  filtered = filtered.filter(r => String(r.site_id) === siteId);
+  if (status)  filtered = filtered.filter(r => r.status === status);
+  document.getElementById('ra-tbody').innerHTML = renderRaRows(filtered);
+}
+
+function showRaForm(ra = null) {
+  const isEdit = !!ra;
+  const initFreq  = ra?.frequency  || 1;
+  const initInt   = ra?.intensity  || 1;
+  const initGrade = ra?.risk_grade || calcRiskLevel(initFreq, initInt);
+
+  const freqOpts = [1,2,3,4,5].map(v =>
+    `<option value="${v}" ${initFreq==v?'selected':''}>${v} - ${{1:'거의없음',2:'가끔',3:'보통',4:'자주',5:'매우자주'}[v]}</option>`
+  ).join('');
+  const intOpts = [1,2,3,4,5].map(v =>
+    `<option value="${v}" ${initInt==v?'selected':''}>${v} - ${{1:'미미',2:'경미',3:'보통',4:'심각',5:'재해/사망'}[v]}</option>`
+  ).join('');
+
+  showModal(`
+  <div class="flex justify-between items-center mb-5">
+    <div>
+      <h3 class="text-lg font-bold text-gray-800">${isEdit ? '위험성평가 수정' : '위험성평가 등록'}</h3>
+      <p class="text-xs text-gray-400 mt-0.5">* 필수 입력 항목</p>
+    </div>
+    <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+  </div>
+  <form onsubmit="saveRa(event, ${ra?.id || 'null'})">
+    <div class="space-y-3">
+
+      <!-- 공종 + 작업내용 -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">공종 *</label>
+          <input class="form-input" name="work_category" value="${ra?.work_category || ''}" required placeholder="예: 철근공사, 거푸집공사">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업내용 *</label>
+          <input class="form-input" name="title" value="${ra?.title || ''}" required placeholder="예: 철근 배근 및 운반 작업">
+        </div>
+      </div>
+
+      <!-- 현장 + 작업유형 -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">현장 *</label>
+          <select class="form-input" name="site_id" required>
+            ${sites.map(s => `<option value="${s.id}" ${ra?.site_id == s.id ? 'selected' : ''}>${s.name}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업유형 *</label>
+          <input class="form-input" name="work_type" value="${ra?.work_type || ''}" required placeholder="예: 고소작업, 굴착작업">
+        </div>
+      </div>
+
+      <!-- 중점위험요인 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">중점위험요인</label>
+        <textarea class="form-input" name="key_hazard" rows="2" placeholder="예: 2m 이상 고소작업 시 추락, 낙하물에 의한 충격">${ra?.key_hazard || ''}</textarea>
+      </div>
+
+      <!-- 빈도 / 강도 / 등급 -->
+      <div class="bg-red-50 rounded-lg p-3">
+        <div class="text-xs font-bold text-red-700 mb-2"><i class="fas fa-exclamation-triangle mr-1"></i>위험성 (빈도 × 강도 → 등급 자동계산)</div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">빈도(가능성) *</label>
+            <select class="form-input text-xs" name="frequency" required onchange="updateRaFormGrade(this.form)">${freqOpts}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">강도(중대성) *</label>
+            <select class="form-input text-xs" name="intensity" required onchange="updateRaFormGrade(this.form)">${intOpts}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">등급 (자동계산)</label>
+            <div id="ra-form-grade-preview" class="mt-1 text-center">${riskLevelBadge(initGrade)}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 구체적개선대책 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">구체적개선대책</label>
+        <textarea class="form-input" name="specific_countermeasure" rows="3" placeholder="예: 안전난간 설치, 안전대 착용 의무화, 낙하물 방지망 설치">${ra?.specific_countermeasure || ''}</textarea>
+      </div>
+
+      <!-- 평가일 / 평가자 / 부서 / 상태 -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">평가일 *</label>
+          <input type="date" class="form-input" name="assessment_date" value="${ra?.assessment_date || new Date().toISOString().split('T')[0]}" required>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">평가자 *</label>
+          <input class="form-input" name="assessor" value="${ra?.assessor || ''}" required placeholder="홍길동">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">부서/팀</label>
+          <input class="form-input" name="department" value="${ra?.department || ''}" placeholder="안전관리팀">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">상태</label>
+          <select class="form-input" name="status">
+            <option value="draft"       ${(!ra || ra.status === 'draft')       ? 'selected' : ''}>작성중</option>
+            <option value="in_progress" ${ra?.status === 'in_progress'         ? 'selected' : ''}>검토중</option>
+            <option value="completed"   ${ra?.status === 'completed'           ? 'selected' : ''}>완료</option>
+            <option value="approved"    ${ra?.status === 'approved'            ? 'selected' : ''}>승인됨</option>
+          </select>
+        </div>
+        ${isEdit && ra.status === 'approved' ? `
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">승인일</label>
+          <input type="date" class="form-input" name="approval_date" value="${ra?.approval_date || ''}">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">승인자</label>
+          <input class="form-input" name="approver" value="${ra?.approver || ''}">
+        </div>` : ''}
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">비고</label>
+        <textarea class="form-input" name="notes" rows="2">${ra?.notes || ''}</textarea>
+      </div>
+    </div>
+    <div class="flex justify-end gap-3 mt-6 border-t pt-4">
+      <button type="button" onclick="closeModal()" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 text-sm">취소</button>
+      <button type="submit" class="btn-primary text-sm">${isEdit ? '수정 저장' : '등록'}</button>
+    </div>
+  </form>`);
+}
+
+function updateRaFormGrade(form) {
+  const f = parseInt(form.frequency?.value || 1);
+  const i = parseInt(form.intensity?.value || 1);
+  const el = document.getElementById('ra-form-grade-preview');
+  if (el) el.innerHTML = riskLevelBadge(calcRiskLevel(f, i));
+}
+
+async function saveRa(e, id) {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  try {
+    if (id) await API.put(`/risk-assessments/${id}`, body);
+    else    await API.post('/risk-assessments', body);
+    closeModal();
+    renderRiskAssessments();
+  } catch(err) { alert('저장 실패: ' + err.message); }
+}
+
+async function deleteRa(id) {
+  if (!confirm('이 위험성평가를 삭제하시겠습니까?\n(모든 평가 항목도 함께 삭제됩니다)')) return;
+  try { await API.delete(`/risk-assessments/${id}`); renderRiskAssessments(); }
+  catch(e) { alert('삭제 실패'); }
+}
+
+// ── 위험성평가 상세(항목 관리) ──────────────────────────────
+async function openRaDetail(id) {
+  showLoading();
+  try {
+    const { data } = await API.get(`/risk-assessments/${id}`);
+    window._currentRa = data;
+    renderRaDetail(data);
+  } catch(e) {
+    document.getElementById('main-content').innerHTML = `<div class="text-red-500 p-4">오류: ${e.message}</div>`;
+  }
+}
+
+function renderRaDetail(ra) {
+  const items = ra.items || [];
+  const totalItems = items.length;
+  const vhCount = items.filter(i => i.before_risk_level === 'very_high').length;
+  const hCount  = items.filter(i => i.before_risk_level === 'high').length;
+  const mCount  = items.filter(i => i.before_risk_level === 'medium').length;
+  const lCount  = items.filter(i => i.before_risk_level === 'low').length;
+
+  const hazardTypes = ['추락','낙하','감전','화재','폭발','충돌','협착','무너짐','화학물질','건강장해','기타'];
+  const ctTypes = ['제거','대체','공학적 대책','관리적 대책','개인보호구'];
+  const freqLabels = { 1:'거의없음(1)', 2:'가끔(2)', 3:'보통(3)', 4:'자주(4)', 5:'매우자주(5)' };
+  const intLabels  = { 1:'미미(1)', 2:'경미(2)', 3:'보통(3)', 4:'심각(4)', 5:'재해(5)' };
+
+  const html = `
+  <!-- 뒤로가기 + 헤더 -->
+  <div class="flex items-center gap-3 mb-5">
+    <button onclick="renderRiskAssessments()" class="text-gray-500 hover:text-gray-800 p-2 rounded-lg hover:bg-gray-100">
+      <i class="fas fa-arrow-left text-lg"></i>
+    </button>
+    <div class="flex-1">
+      <div class="flex items-center gap-3 flex-wrap">
+        <h2 class="text-xl font-bold text-gray-800">${ra.title}</h2>
+        ${raStatusBadge(ra.status)}
+      </div>
+      <div class="text-sm text-gray-500 mt-0.5 flex flex-wrap gap-x-3 gap-y-1">
+        ${ra.work_category ? `<span><i class="fas fa-layer-group mr-1"></i>공종: <b class="text-gray-700">${ra.work_category}</b></span>` : ''}
+        <span><i class="fas fa-building mr-1"></i>${ra.site_name}</span>
+        <span><i class="fas fa-tools mr-1"></i>${ra.work_type}</span>
+        <span><i class="fas fa-calendar mr-1"></i>${formatDate(ra.assessment_date)}</span>
+        <span><i class="fas fa-user mr-1"></i>${ra.assessor}</span>
+        ${ra.key_hazard ? `<span class="text-orange-600"><i class="fas fa-exclamation-triangle mr-1"></i>중점위험: ${ra.key_hazard}</span>` : ''}
+      </div>
+    </div>
+    <button class="btn-primary text-sm" onclick='showRaForm(${JSON.stringify(ra).replace(/'/g,"&#39;")})'>
+      <i class="fas fa-edit mr-1"></i>정보 수정
+    </button>
+  </div>
+
+  <!-- 위험성 요약 카드 -->
+  <div class="grid grid-cols-4 gap-3 mb-5">
+    <div class="card p-3 flex items-center gap-3 border-l-4 border-red-500">
+      <div class="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center"><i class="fas fa-exclamation-circle text-red-600"></i></div>
+      <div><div class="text-xl font-bold text-red-600">${vhCount}</div><div class="text-xs text-gray-500">매우높음</div></div>
+    </div>
+    <div class="card p-3 flex items-center gap-3 border-l-4 border-orange-400">
+      <div class="w-9 h-9 rounded-lg bg-orange-100 flex items-center justify-center"><i class="fas fa-exclamation-triangle text-orange-500"></i></div>
+      <div><div class="text-xl font-bold text-orange-500">${hCount}</div><div class="text-xs text-gray-500">높음</div></div>
+    </div>
+    <div class="card p-3 flex items-center gap-3 border-l-4 border-yellow-400">
+      <div class="w-9 h-9 rounded-lg bg-yellow-100 flex items-center justify-center"><i class="fas fa-exclamation text-yellow-500"></i></div>
+      <div><div class="text-xl font-bold text-yellow-600">${mCount}</div><div class="text-xs text-gray-500">보통</div></div>
+    </div>
+    <div class="card p-3 flex items-center gap-3 border-l-4 border-green-500">
+      <div class="w-9 h-9 rounded-lg bg-green-100 flex items-center justify-center"><i class="fas fa-check-circle text-green-600"></i></div>
+      <div><div class="text-xl font-bold text-green-600">${lCount}</div><div class="text-xs text-gray-500">낮음</div></div>
+    </div>
+  </div>
+
+  <!-- 평가 항목 테이블 -->
+  <div class="card overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-3 border-b bg-gray-50">
+      <h3 class="font-bold text-gray-800"><i class="fas fa-list-ol mr-2 text-blue-500"></i>위험성 평가 항목 <span class="text-blue-600">(${totalItems}건)</span></h3>
+      <button class="btn-primary text-xs py-1.5 px-3" onclick="showRaItemForm(${ra.id}, null, ${totalItems + 1})">
+        <i class="fas fa-plus mr-1"></i>항목 추가
+      </button>
+    </div>
+
+    <!-- 위험성 매트릭스 범례 -->
+    <div class="px-5 py-3 bg-blue-50 border-b flex flex-wrap gap-4 text-xs text-gray-600 items-center">
+      <span class="font-semibold text-blue-700"><i class="fas fa-info-circle mr-1"></i>위험성 = 빈도 × 강도</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-red-500 inline-block"></span>매우높음(15↑)</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-orange-400 inline-block"></span>높음(9~14)</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-yellow-400 inline-block"></span>보통(4~8)</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-green-400 inline-block"></span>낮음(1~3)</span>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs" style="min-width:1100px">
+        <thead class="bg-gray-50 border-b">
+          <tr>
+            <th class="px-2 py-2 text-gray-600 font-semibold text-center w-8">No.</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-left">작업단계</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-left">유해·위험요인</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-left">사고유형</th>
+            <th colspan="3" class="px-2 py-2 text-gray-600 font-semibold text-center bg-red-50">현재 위험성(전)</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-left">감소대책</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-center">대책유형</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-center">담당자</th>
+            <th colspan="3" class="px-2 py-2 text-gray-600 font-semibold text-center bg-green-50">잔여 위험성(후)</th>
+            <th class="px-2 py-2 text-gray-600 font-semibold text-center">관리</th>
+          </tr>
+          <tr class="bg-gray-50 border-b text-xs text-gray-500">
+            <th></th><th></th><th></th><th></th>
+            <th class="px-2 py-1 text-center bg-red-50">빈도</th>
+            <th class="px-2 py-1 text-center bg-red-50">강도</th>
+            <th class="px-2 py-1 text-center bg-red-50">위험성</th>
+            <th></th><th></th><th></th>
+            <th class="px-2 py-1 text-center bg-green-50">빈도</th>
+            <th class="px-2 py-1 text-center bg-green-50">강도</th>
+            <th class="px-2 py-1 text-center bg-green-50">위험성</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="ra-items-tbody">
+          ${renderRaItemRows(items, ra.id)}
+        </tbody>
+      </table>
+    </div>
+    ${totalItems === 0 ? '' : ''}
+  </div>`;
+
+  document.getElementById('main-content').innerHTML = html;
+}
+
+function renderRaItemRows(items, raId, source = 'initial') {
+  if (!items.length) return `
+    <tr><td colspan="14" class="text-center py-10 text-gray-400">
+      <i class="fas fa-list-ol text-3xl mb-2 block"></i>
+      평가 항목이 없습니다. [항목 추가] 버튼을 눌러 위험요인을 등록하세요.
+    </td></tr>`;
+
+  return items.map(item => {
+    const bLevel = RISK_LEVEL_MAP[item.before_risk_level] || RISK_LEVEL_MAP.low;
+    const aLevel = RISK_LEVEL_MAP[item.after_risk_level]  || RISK_LEVEL_MAP.low;
+    return `
+    <tr class="border-b border-gray-100 hover:bg-gray-50/80">
+      <td class="px-2 py-2.5 text-center text-gray-500 font-medium">${item.no}</td>
+      <td class="px-3 py-2.5 text-gray-800 font-medium whitespace-nowrap">${item.work_step}</td>
+      <td class="px-3 py-2.5 text-gray-700">
+        <div class="font-medium">${item.hazard_description}</div>
+        <div class="text-gray-400 text-xs mt-0.5">${item.hazard_type}</div>
+      </td>
+      <td class="px-3 py-2.5 text-gray-700 whitespace-nowrap">${item.possible_accident}</td>
+      <td class="px-2 py-2.5 text-center bg-red-50/50 text-gray-700">${item.before_frequency}</td>
+      <td class="px-2 py-2.5 text-center bg-red-50/50 text-gray-700">${item.before_intensity}</td>
+      <td class="px-2 py-2.5 text-center bg-red-50/50">
+        <span class="text-xs px-2 py-0.5 rounded-full font-semibold ${bLevel.cls}">${bLevel.label}</span>
+      </td>
+      <td class="px-3 py-2.5 text-gray-700 max-w-48">
+        <div class="line-clamp-2">${item.countermeasure || '-'}</div>
+      </td>
+      <td class="px-3 py-2.5 text-center text-gray-600 whitespace-nowrap">
+        ${item.countermeasure_type ? `<span class="bg-indigo-50 text-indigo-700 text-xs px-1.5 py-0.5 rounded">${item.countermeasure_type}</span>` : '-'}
+      </td>
+      <td class="px-3 py-2.5 text-center text-gray-600 whitespace-nowrap">${item.responsible || '-'}</td>
+      <td class="px-2 py-2.5 text-center bg-green-50/50 text-gray-700">${item.after_frequency}</td>
+      <td class="px-2 py-2.5 text-center bg-green-50/50 text-gray-700">${item.after_intensity}</td>
+      <td class="px-2 py-2.5 text-center bg-green-50/50">
+        <span class="text-xs px-2 py-0.5 rounded-full font-semibold ${aLevel.cls}">${aLevel.label}</span>
+      </td>
+      <td class="px-2 py-2.5 text-center">
+        <div class="flex items-center justify-center gap-1">
+          <button class="text-blue-500 hover:text-blue-700 p-1 rounded hover:bg-blue-50"
+            onclick='showRaItemForm(${raId}, ${JSON.stringify(item).replace(/'/g,"&#39;")}, null, "${source}")'>
+            <i class="fas fa-edit"></i>
+          </button>
+          <button class="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50"
+            onclick="deleteRaItem(${raId}, ${item.id}, '${source}')">
+            <i class="fas fa-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function showRaItemForm(raId, item = null, nextNo = null, source = 'initial') {
+  const isEdit = !!item;
+  const hazardTypes = ['추락','낙하','감전','화재','폭발','충돌/격돌','협착/끼임','무너짐','화학물질','소음/진동','건강장해','기타'];
+  const ctTypes = ['제거','대체','공학적 대책','관리적 대책','개인보호구'];
+
+  const freqOpts = [1,2,3,4,5].map(v => `<option value="${v}" ${(item?.before_frequency||1)==v?'selected':''}>${v} - ${{1:'거의없음',2:'가끔',3:'보통',4:'자주',5:'매우자주'}[v]}</option>`).join('');
+  const intOpts  = [1,2,3,4,5].map(v => `<option value="${v}" ${(item?.before_intensity||1)==v?'selected':''}>${v} - ${{1:'미미',2:'경미',3:'보통',4:'심각',5:'재해/사망'}[v]}</option>`).join('');
+  const aFreqOpts= [1,2,3,4,5].map(v => `<option value="${v}" ${(item?.after_frequency||1)==v?'selected':''}>${v} - ${{1:'거의없음',2:'가끔',3:'보통',4:'자주',5:'매우자주'}[v]}</option>`).join('');
+  const aIntOpts = [1,2,3,4,5].map(v => `<option value="${v}" ${(item?.after_intensity||1)==v?'selected':''}>${v} - ${{1:'미미',2:'경미',3:'보통',4:'심각',5:'재해/사망'}[v]}</option>`).join('');
+
+  showModal(`
+  <div class="flex justify-between items-center mb-4">
+    <div>
+      <h3 class="text-lg font-bold text-gray-800">${isEdit ? '평가 항목 수정' : '평가 항목 추가'}</h3>
+      <p class="text-xs text-gray-400 mt-0.5">빈도 × 강도로 위험성 수준이 자동 계산됩니다</p>
+    </div>
+    <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+  </div>
+  <form onsubmit="saveRaItem(event, ${raId}, ${item?.id || 'null'}, '${source}')">  
+    <div class="space-y-4">
+
+      <!-- 작업 단계 / 위험요인 분류 -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">No.</label>
+          <input type="number" class="form-input" name="no" value="${item?.no || nextNo || 1}" required min="1">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">작업 단계(공정) *</label>
+          <input class="form-input" name="work_step" value="${item?.work_step || ''}" required placeholder="예: 철근 운반">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">유해·위험요인 분류 *</label>
+          <select class="form-input" name="hazard_type" required>
+            ${hazardTypes.map(t => `<option value="${t}" ${item?.hazard_type===t?'selected':''}>${t}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">사고 유형 *</label>
+          <input class="form-input" name="possible_accident" value="${item?.possible_accident || ''}" required placeholder="예: 추락, 낙하물 충격">
+        </div>
+        <div class="col-span-2">
+          <label class="block text-xs font-semibold text-gray-600 mb-1">유해·위험요인 설명 *</label>
+          <textarea class="form-input" name="hazard_description" rows="2" required placeholder="예: 2m 이상 고소 작업 시 안전난간 미설치로 인한 작업자 추락 위험">${item?.hazard_description || ''}</textarea>
+        </div>
+      </div>
+
+      <!-- 현재 위험성 -->
+      <div class="bg-red-50 rounded-lg p-3">
+        <div class="text-xs font-bold text-red-700 mb-2 flex items-center gap-1">
+          <i class="fas fa-exclamation-triangle"></i> 현재 위험성 (개선 전)
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">빈도(가능성) *</label>
+            <select class="form-input text-xs" name="before_frequency" required onchange="updateRiskPreview(this.form)">${freqOpts}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">강도(중대성) *</label>
+            <select class="form-input text-xs" name="before_intensity" required onchange="updateRiskPreview(this.form)">${intOpts}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">위험성 수준</label>
+            <div id="before-risk-preview" class="mt-1 text-center">${riskLevelBadge(item?.before_risk_level || calcRiskLevel(item?.before_frequency||1, item?.before_intensity||1))}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 감소대책 -->
+      <div class="bg-indigo-50 rounded-lg p-3">
+        <div class="text-xs font-bold text-indigo-700 mb-2 flex items-center gap-1">
+          <i class="fas fa-shield-alt"></i> 감소 대책
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="col-span-2">
+            <label class="block text-xs text-gray-600 mb-1">감소대책 내용</label>
+            <textarea class="form-input text-xs" name="countermeasure" rows="2" placeholder="예: 안전난간 설치, 안전대 착용 의무화, 작업발판 설치">${item?.countermeasure || ''}</textarea>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">대책 유형</label>
+            <select class="form-input text-xs" name="countermeasure_type">
+              <option value="">선택</option>
+              ${ctTypes.map(t => `<option value="${t}" ${item?.countermeasure_type===t?'selected':''}>${t}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">담당자</label>
+            <input class="form-input text-xs" name="responsible" value="${item?.responsible || ''}" placeholder="홍길동">
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">이행 기한</label>
+            <input type="date" class="form-input text-xs" name="due_date" value="${item?.due_date || ''}">
+          </div>
+        </div>
+      </div>
+
+      <!-- 잔여 위험성 -->
+      <div class="bg-green-50 rounded-lg p-3">
+        <div class="text-xs font-bold text-green-700 mb-2 flex items-center gap-1">
+          <i class="fas fa-check-circle"></i> 잔여 위험성 (개선 후)
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">빈도(가능성)</label>
+            <select class="form-input text-xs" name="after_frequency" onchange="updateRiskPreview(this.form)">${aFreqOpts}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">강도(중대성)</label>
+            <select class="form-input text-xs" name="after_intensity" onchange="updateRiskPreview(this.form)">${aIntOpts}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">위험성 수준</label>
+            <div id="after-risk-preview" class="mt-1 text-center">${riskLevelBadge(item?.after_risk_level || calcRiskLevel(item?.after_frequency||1, item?.after_intensity||1))}</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+    <div class="flex justify-end gap-3 mt-5 border-t pt-4">
+      <button type="button" onclick="closeModal()" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 text-sm">취소</button>
+      <button type="submit" class="btn-primary text-sm">${isEdit ? '수정 저장' : '항목 추가'}</button>
+    </div>
+  </form>`);
+}
+
+function updateRiskPreview(form) {
+  const bf = parseInt(form.before_frequency?.value || 1);
+  const bi = parseInt(form.before_intensity?.value || 1);
+  const af = parseInt(form.after_frequency?.value  || 1);
+  const ai = parseInt(form.after_intensity?.value  || 1);
+  const bPrev = document.getElementById('before-risk-preview');
+  const aPrev = document.getElementById('after-risk-preview');
+  if (bPrev) bPrev.innerHTML = riskLevelBadge(calcRiskLevel(bf, bi));
+  if (aPrev) aPrev.innerHTML = riskLevelBadge(calcRiskLevel(af, ai));
+}
+
+async function saveRaItem(e, raId, itemId, source = 'initial') {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  try {
+    if (itemId) await API.put(`/risk-assessments/${raId}/items/${itemId}`, body);
+    else        await API.post(`/risk-assessments/${raId}/items`, body);
+    closeModal();
+    if (source === 'periodic') openPaDetail(raId);
+    else if (source === 'adhoc') openAdhocDetail(raId);
+    else openRaDetail(raId);
+  } catch(err) { alert('저장 실패: ' + err.message); }
+}
+
+async function deleteRaItem(raId, itemId, source = 'initial') {
+  if (!confirm('이 항목을 삭제하시겠습니까?')) return;
+  try {
+    await API.delete(`/risk-assessments/${raId}/items/${itemId}`);
+    if (source === 'periodic') openPaDetail(raId);
+    else if (source === 'adhoc') openAdhocDetail(raId);
+    else openRaDetail(raId);
+  } catch(e) { alert('삭제 실패'); }
+}
+
+// ============================================================
+// 위험성평가(정기) - Periodic Risk Assessment
+// ============================================================
+
+// ── 주기 표시 헬퍼 ──────────────────────────────────────────
+function periodicCycleLabel(cycle) {
+  const map = { 1:'매월', 2:'2개월', 3:'분기(3개월)', 6:'반기(6개월)', 12:'연간(12개월)' };
+  return map[cycle] || `${cycle}개월`;
+}
+
+function periodLabel(year, month) {
+  if (!year) return '-';
+  return month ? `${year}년 ${String(month).padStart(2,'0')}월` : `${year}년`;
+}
+
+// ── 연도/월 목록 생성 ──────────────────────────────────────
+function genYearOptions(selected) {
+  const cur = new Date().getFullYear();
+  return [cur-1, cur, cur+1].map(y =>
+    `<option value="${y}" ${selected==y?'selected':''}>${y}년</option>`
+  ).join('');
+}
+function genMonthOptions(selected) {
+  return Array.from({length:12},(_,i)=>i+1).map(m =>
+    `<option value="${m}" ${selected==m?'selected':''}>${m}월</option>`
+  ).join('');
+}
+
+// ── 메인 렌더러 ────────────────────────────────────────────
+async function renderPeriodicAssessments() {
+  showLoading();
+  try {
+    const [raRes, sitesRes] = await Promise.all([
+      API.get('/risk-assessments', { params: { assessment_type: 'periodic' } }),
+      API.get('/sites')
+    ]);
+    sites = sitesRes.data;
+    window._paData = raRes.data;
+    renderPeriodicContent(raRes.data);
+  } catch(e) {
+    document.getElementById('main-content').innerHTML =
+      `<div class="text-red-500 p-4">오류: ${e.message}</div>`;
+  }
+}
+
+function renderPeriodicContent(list) {
+  const counts = { total: list.length, draft: 0, in_progress: 0, completed: 0, approved: 0 };
+  list.forEach(r => { if (counts[r.status] !== undefined) counts[r.status]++; });
+
+  // 연도별 그룹
+  const byYear = {};
+  list.forEach(r => {
+    const y = r.period_year || '미설정';
+    if (!byYear[y]) byYear[y] = [];
+    byYear[y].push(r);
+  });
+  const sortedYears = Object.keys(byYear).sort((a,b) => b - a);
+
+  const html = `
+  <!-- 요약 카드 -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+    <div class="card p-4 flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-blue-100 flex items-center justify-center">
+        <i class="fas fa-sync-alt text-blue-600 text-lg"></i>
+      </div>
+      <div><div class="text-2xl font-bold text-gray-800">${counts.total}</div><div class="text-xs text-gray-500">전체 회차</div></div>
+    </div>
+    <div class="card p-4 flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-gray-100 flex items-center justify-center">
+        <i class="fas fa-pencil-alt text-gray-500 text-lg"></i>
+      </div>
+      <div><div class="text-2xl font-bold text-gray-700">${counts.draft + counts.in_progress}</div><div class="text-xs text-gray-500">진행중</div></div>
+    </div>
+    <div class="card p-4 flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-green-100 flex items-center justify-center">
+        <i class="fas fa-check-circle text-green-600 text-lg"></i>
+      </div>
+      <div><div class="text-2xl font-bold text-green-700">${counts.completed}</div><div class="text-xs text-gray-500">완료</div></div>
+    </div>
+    <div class="card p-4 flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-purple-100 flex items-center justify-center">
+        <i class="fas fa-stamp text-purple-600 text-lg"></i>
+      </div>
+      <div><div class="text-2xl font-bold text-purple-700">${counts.approved}</div><div class="text-xs text-gray-500">승인됨</div></div>
+    </div>
+  </div>
+
+  <!-- 필터 & 등록 -->
+  <div class="flex flex-wrap gap-2 justify-between items-center mb-4">
+    <div class="flex gap-2 flex-wrap">
+      <select id="pa-site-filter" class="form-input w-auto text-sm" onchange="applyPaFilter()">
+        <option value="">전체 현장</option>
+        ${sites.map(s=>`<option value="${s.id}">${s.name}</option>`).join('')}
+      </select>
+      <select id="pa-year-filter" class="form-input w-auto text-sm" onchange="applyPaFilter()">
+        <option value="">전체 연도</option>
+        ${sortedYears.filter(y=>y!=='미설정').map(y=>`<option value="${y}">${y}년</option>`).join('')}
+      </select>
+      <select id="pa-month-filter" class="form-input w-auto text-sm" onchange="applyPaFilter()">
+        <option value="">전체 월</option>
+        ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}">${m}월</option>`).join('')}
+      </select>
+      <select id="pa-status-filter" class="form-input w-auto text-sm" onchange="applyPaFilter()">
+        <option value="">전체 상태</option>
+        <option value="draft">작성중</option>
+        <option value="in_progress">검토중</option>
+        <option value="completed">완료</option>
+        <option value="approved">승인됨</option>
+      </select>
+    </div>
+    <button class="btn-primary text-sm" onclick="showPaForm()">
+      <i class="fas fa-plus mr-1"></i>정기평가 등록
+    </button>
+  </div>
+
+  <!-- 연도별 그룹 목록 -->
+  <div id="pa-list-container">
+    ${sortedYears.length === 0
+      ? `<div class="card p-12 text-center text-gray-400">
+           <i class="fas fa-sync-alt text-4xl mb-3 block"></i>
+           등록된 정기 위험성평가가 없습니다.<br>
+           <span class="text-sm mt-1 block">[정기평가 등록] 버튼으로 첫 번째 평가를 추가하세요.</span>
+         </div>`
+      : sortedYears.map(year => renderPaYearGroup(year, byYear[year])).join('')
+    }
+  </div>`;
+
+  document.getElementById('main-content').innerHTML = html;
+}
+
+function renderPaYearGroup(year, list) {
+  return `
+  <div class="mb-6">
+    <div class="flex items-center gap-3 mb-3">
+      <div class="w-1 h-6 bg-blue-600 rounded"></div>
+      <h3 class="text-base font-bold text-gray-800">${year === '미설정' ? '연도 미설정' : year + '년'}</h3>
+      <span class="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">${list.length}건</span>
+    </div>
+    <div class="card overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 border-b">
+            <tr>
+              <th class="text-center px-3 py-2.5 text-gray-600 font-semibold w-24">평가 기간</th>
+              <th class="text-center px-3 py-2.5 text-gray-600 font-semibold w-16">주기</th>
+              <th class="text-left px-4 py-2.5 text-gray-600 font-semibold">공종</th>
+              <th class="text-left px-4 py-2.5 text-gray-600 font-semibold">작업내용</th>
+              <th class="text-left px-4 py-2.5 text-gray-600 font-semibold">중점위험요인</th>
+              <th class="text-center px-3 py-2.5 text-gray-600 font-semibold">빈도</th>
+              <th class="text-center px-3 py-2.5 text-gray-600 font-semibold">강도</th>
+              <th class="text-center px-3 py-2.5 text-gray-600 font-semibold">등급</th>
+              <th class="text-left px-4 py-2.5 text-gray-600 font-semibold">구체적개선대책</th>
+              <th class="text-left px-3 py-2.5 text-gray-600 font-semibold">현장</th>
+              <th class="text-left px-3 py-2.5 text-gray-600 font-semibold">평가자</th>
+              <th class="text-center px-3 py-2.5 text-gray-600 font-semibold">상태</th>
+              <th class="text-center px-3 py-2.5 text-gray-600 font-semibold">관리</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list.map(r => renderPaRow(r)).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderPaRow(r) {
+  const rLevel = RISK_LEVEL_MAP[r.risk_grade] || RISK_LEVEL_MAP.low;
+  const period = r.period_month
+    ? `${r.period_year || '?'}년 ${String(r.period_month).padStart(2,'0')}월`
+    : (r.period_year ? `${r.period_year}년` : '-');
+
+  return `
+  <tr class="border-b border-gray-100 hover:bg-blue-50/30 cursor-pointer" onclick="openPaDetail(${r.id})">
+    <td class="px-3 py-2.5 text-center font-semibold text-blue-700 whitespace-nowrap">${period}</td>
+    <td class="px-3 py-2.5 text-center text-xs text-gray-500 whitespace-nowrap">
+      <span class="bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">${periodicCycleLabel(r.periodic_cycle || 3)}</span>
+    </td>
+    <td class="px-4 py-2.5 text-gray-700 font-medium whitespace-nowrap">${r.work_category || '-'}</td>
+    <td class="px-4 py-2.5 font-medium text-blue-700">${r.title}</td>
+    <td class="px-4 py-2.5 text-gray-600 max-w-40"><div class="line-clamp-2">${r.key_hazard || '-'}</div></td>
+    <td class="px-3 py-2.5 text-center font-semibold text-gray-700">${r.frequency || 1}</td>
+    <td class="px-3 py-2.5 text-center font-semibold text-gray-700">${r.intensity || 1}</td>
+    <td class="px-3 py-2.5 text-center">
+      <span class="text-xs px-2 py-0.5 rounded-full font-semibold ${rLevel.cls}">${rLevel.label}</span>
+    </td>
+    <td class="px-4 py-2.5 text-gray-600 max-w-48"><div class="line-clamp-2">${r.specific_countermeasure || '-'}</div></td>
+    <td class="px-3 py-2.5 text-gray-600 text-xs whitespace-nowrap">${r.site_name}</td>
+    <td class="px-3 py-2.5 text-gray-700 whitespace-nowrap">${r.assessor}</td>
+    <td class="px-3 py-2.5 text-center">${raStatusBadge(r.status)}</td>
+    <td class="px-3 py-2.5 text-center" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-center gap-1">
+        <button class="text-blue-500 hover:text-blue-700 p-1 rounded hover:bg-blue-50"
+          onclick='showPaForm(${JSON.stringify(r).replace(/'/g,"&#39;")})'>
+          <i class="fas fa-edit"></i>
+        </button>
+        <button class="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50"
+          onclick="deletePa(${r.id})">
+          <i class="fas fa-trash"></i>
+        </button>
+      </div>
+    </td>
+  </tr>`;
+}
+
+function applyPaFilter() {
+  const siteId  = document.getElementById('pa-site-filter')?.value  || '';
+  const year    = document.getElementById('pa-year-filter')?.value   || '';
+  const month   = document.getElementById('pa-month-filter')?.value  || '';
+  const status  = document.getElementById('pa-status-filter')?.value || '';
+  let filtered  = window._paData || [];
+  if (siteId)  filtered = filtered.filter(r => String(r.site_id)    === siteId);
+  if (year)    filtered = filtered.filter(r => String(r.period_year) === year);
+  if (month)   filtered = filtered.filter(r => String(r.period_month)=== month);
+  if (status)  filtered = filtered.filter(r => r.status             === status);
+
+  // 연도별 재그룹
+  const byYear = {};
+  filtered.forEach(r => {
+    const y = r.period_year || '미설정';
+    if (!byYear[y]) byYear[y] = [];
+    byYear[y].push(r);
+  });
+  const sortedYears = Object.keys(byYear).sort((a,b) => b - a);
+  const container = document.getElementById('pa-list-container');
+  if (!container) return;
+  container.innerHTML = sortedYears.length === 0
+    ? `<div class="card p-10 text-center text-gray-400"><i class="fas fa-search text-3xl mb-2 block"></i>조건에 맞는 정기평가가 없습니다</div>`
+    : sortedYears.map(y => renderPaYearGroup(y, byYear[y])).join('');
+}
+
+// ── 등록/수정 폼 ────────────────────────────────────────────
+function showPaForm(ra = null) {
+  const isEdit   = !!ra;
+  const initFreq  = ra?.frequency  || 1;
+  const initInt   = ra?.intensity  || 1;
+  const initGrade = ra?.risk_grade || calcRiskLevel(initFreq, initInt);
+  const curYear   = new Date().getFullYear();
+  const curMonth  = new Date().getMonth() + 1;
+
+  const freqOpts = [1,2,3,4,5].map(v =>
+    `<option value="${v}" ${initFreq==v?'selected':''}>${v} - ${{1:'거의없음',2:'가끔',3:'보통',4:'자주',5:'매우자주'}[v]}</option>`
+  ).join('');
+  const intOpts = [1,2,3,4,5].map(v =>
+    `<option value="${v}" ${initInt==v?'selected':''}>${v} - ${{1:'미미',2:'경미',3:'보통',4:'심각',5:'재해/사망'}[v]}</option>`
+  ).join('');
+
+  showModal(`
+  <div class="flex justify-between items-center mb-4">
+    <div>
+      <h3 class="text-lg font-bold text-gray-800">${isEdit ? '정기 위험성평가 수정' : '정기 위험성평가 등록'}</h3>
+      <p class="text-xs text-gray-400 mt-0.5">* 필수 입력 항목</p>
+    </div>
+    <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+  </div>
+  <form onsubmit="savePa(event, ${ra?.id || 'null'})">
+    <input type="hidden" name="assessment_type" value="periodic">
+    <div class="space-y-3">
+
+      <!-- 평가 주기 / 연도 / 월 -->
+      <div class="bg-blue-50 rounded-lg p-3">
+        <div class="text-xs font-bold text-blue-700 mb-2"><i class="fas fa-sync-alt mr-1"></i>정기 주기 설정</div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">평가 주기 *</label>
+            <select class="form-input text-xs" name="periodic_cycle" required>
+              <option value="1"  ${(ra?.periodic_cycle||3)==1 ?'selected':''}>매월</option>
+              <option value="2"  ${(ra?.periodic_cycle||3)==2 ?'selected':''}>2개월</option>
+              <option value="3"  ${(ra?.periodic_cycle||3)==3 ?'selected':''}>분기(3개월)</option>
+              <option value="6"  ${(ra?.periodic_cycle||3)==6 ?'selected':''}>반기(6개월)</option>
+              <option value="12" ${(ra?.periodic_cycle||3)==12?'selected':''}>연간(12개월)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">평가 연도 *</label>
+            <select class="form-input text-xs" name="period_year" required>
+              ${genYearOptions(ra?.period_year || curYear)}
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">평가 월 *</label>
+            <select class="form-input text-xs" name="period_month" required>
+              ${genMonthOptions(ra?.period_month || curMonth)}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- 공종 + 작업내용 -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">공종 *</label>
+          <input class="form-input" name="work_category" value="${ra?.work_category || ''}" required placeholder="예: 철근공사, 거푸집공사">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업내용 *</label>
+          <input class="form-input" name="title" value="${ra?.title || ''}" required placeholder="예: 철근 배근 및 운반 작업">
+        </div>
+      </div>
+
+      <!-- 현장 + 작업유형 -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">현장 *</label>
+          <select class="form-input" name="site_id" required>
+            ${sites.map(s=>`<option value="${s.id}" ${ra?.site_id==s.id?'selected':''}>${s.name}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업유형 *</label>
+          <input class="form-input" name="work_type" value="${ra?.work_type || ''}" required placeholder="예: 고소작업, 굴착작업">
+        </div>
+      </div>
+
+      <!-- 중점위험요인 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">중점위험요인</label>
+        <textarea class="form-input" name="key_hazard" rows="2" placeholder="예: 2m 이상 고소작업 시 추락, 낙하물에 의한 충격">${ra?.key_hazard || ''}</textarea>
+      </div>
+
+      <!-- 빈도 / 강도 / 등급 -->
+      <div class="bg-red-50 rounded-lg p-3">
+        <div class="text-xs font-bold text-red-700 mb-2"><i class="fas fa-exclamation-triangle mr-1"></i>위험성 (빈도 × 강도 → 등급 자동계산)</div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">빈도(가능성) *</label>
+            <select class="form-input text-xs" name="frequency" required onchange="updateRaFormGrade(this.form)">${freqOpts}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">강도(중대성) *</label>
+            <select class="form-input text-xs" name="intensity" required onchange="updateRaFormGrade(this.form)">${intOpts}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">등급 (자동계산)</label>
+            <div id="ra-form-grade-preview" class="mt-1 text-center">${riskLevelBadge(initGrade)}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 구체적개선대책 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">구체적개선대책</label>
+        <textarea class="form-input" name="specific_countermeasure" rows="3" placeholder="예: 안전난간 설치, 안전대 착용 의무화, 낙하물 방지망 설치">${ra?.specific_countermeasure || ''}</textarea>
+      </div>
+
+      <!-- 평가일 / 평가자 / 부서 / 상태 -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">평가일 *</label>
+          <input type="date" class="form-input" name="assessment_date" value="${ra?.assessment_date || new Date().toISOString().split('T')[0]}" required>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">평가자 *</label>
+          <input class="form-input" name="assessor" value="${ra?.assessor || ''}" required placeholder="홍길동">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">부서/팀</label>
+          <input class="form-input" name="department" value="${ra?.department || ''}" placeholder="안전관리팀">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">상태</label>
+          <select class="form-input" name="status">
+            <option value="draft"       ${(!ra||ra.status==='draft')      ?'selected':''}>작성중</option>
+            <option value="in_progress" ${ra?.status==='in_progress'      ?'selected':''}>검토중</option>
+            <option value="completed"   ${ra?.status==='completed'        ?'selected':''}>완료</option>
+            <option value="approved"    ${ra?.status==='approved'         ?'selected':''}>승인됨</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">비고</label>
+        <textarea class="form-input" name="notes" rows="2">${ra?.notes || ''}</textarea>
+      </div>
+    </div>
+    <div class="flex justify-end gap-3 mt-5 border-t pt-4">
+      <button type="button" onclick="closeModal()" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 text-sm">취소</button>
+      <button type="submit" class="btn-primary text-sm">${isEdit ? '수정 저장' : '등록'}</button>
+    </div>
+  </form>`);
+}
+
+async function savePa(e, id) {
+  e.preventDefault();
+  const fd   = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  try {
+    if (id) await API.put(`/risk-assessments/${id}`, body);
+    else    await API.post('/risk-assessments', body);
+    closeModal();
+    renderPeriodicAssessments();
+  } catch(err) { alert('저장 실패: ' + err.message); }
+}
+
+async function deletePa(id) {
+  if (!confirm('이 정기 위험성평가를 삭제하시겠습니까?\n(모든 평가 항목도 함께 삭제됩니다)')) return;
+  try { await API.delete(`/risk-assessments/${id}`); renderPeriodicAssessments(); }
+  catch(e) { alert('삭제 실패'); }
+}
+
+// ── 정기평가 상세 (항목 관리는 최초와 동일 로직 재사용) ──────
+async function openPaDetail(id) {
+  showLoading();
+  try {
+    const { data } = await API.get(`/risk-assessments/${id}`);
+    window._currentRa = data;
+    window._currentRaSource = 'periodic';   // 뒤로가기 구분용
+    renderPaDetail(data);
+  } catch(e) {
+    document.getElementById('main-content').innerHTML =
+      `<div class="text-red-500 p-4">오류: ${e.message}</div>`;
+  }
+}
+
+function renderPaDetail(ra) {
+  const items    = ra.items || [];
+  const totalItems = items.length;
+  const vhCount  = items.filter(i => i.before_risk_level === 'very_high').length;
+  const hCount   = items.filter(i => i.before_risk_level === 'high').length;
+  const mCount   = items.filter(i => i.before_risk_level === 'medium').length;
+  const lCount   = items.filter(i => i.before_risk_level === 'low').length;
+
+  const period = ra.period_month
+    ? `${ra.period_year}년 ${String(ra.period_month).padStart(2,'0')}월`
+    : (ra.period_year ? `${ra.period_year}년` : '');
+
+  const html = `
+  <!-- 뒤로가기 + 헤더 -->
+  <div class="flex items-center gap-3 mb-5">
+    <button onclick="renderPeriodicAssessments()" class="text-gray-500 hover:text-gray-800 p-2 rounded-lg hover:bg-gray-100">
+      <i class="fas fa-arrow-left text-lg"></i>
+    </button>
+    <div class="flex-1">
+      <div class="flex items-center gap-3 flex-wrap">
+        ${period ? `<span class="bg-blue-100 text-blue-700 text-sm font-bold px-3 py-1 rounded-full"><i class="fas fa-calendar-alt mr-1"></i>${period}</span>` : ''}
+        <h2 class="text-xl font-bold text-gray-800">${ra.title}</h2>
+        ${raStatusBadge(ra.status)}
+      </div>
+      <div class="text-sm text-gray-500 mt-0.5 flex flex-wrap gap-x-3 gap-y-1">
+        ${ra.work_category ? `<span><i class="fas fa-layer-group mr-1"></i>공종: <b class="text-gray-700">${ra.work_category}</b></span>` : ''}
+        <span><i class="fas fa-sync-alt mr-1"></i>주기: ${periodicCycleLabel(ra.periodic_cycle || 3)}</span>
+        <span><i class="fas fa-building mr-1"></i>${ra.site_name}</span>
+        <span><i class="fas fa-tools mr-1"></i>${ra.work_type}</span>
+        <span><i class="fas fa-calendar mr-1"></i>${formatDate(ra.assessment_date)}</span>
+        <span><i class="fas fa-user mr-1"></i>${ra.assessor}</span>
+        ${ra.key_hazard ? `<span class="text-orange-600"><i class="fas fa-exclamation-triangle mr-1"></i>중점위험: ${ra.key_hazard}</span>` : ''}
+      </div>
+    </div>
+    <button class="btn-primary text-sm" onclick='showPaForm(${JSON.stringify(ra).replace(/'/g,"&#39;")})'>
+      <i class="fas fa-edit mr-1"></i>정보 수정
+    </button>
+  </div>
+
+  <!-- 위험성 요약 카드 -->
+  <div class="grid grid-cols-4 gap-3 mb-5">
+    <div class="card p-3 flex items-center gap-3 border-l-4 border-red-500">
+      <div class="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center"><i class="fas fa-exclamation-circle text-red-600"></i></div>
+      <div><div class="text-xl font-bold text-red-600">${vhCount}</div><div class="text-xs text-gray-500">매우높음</div></div>
+    </div>
+    <div class="card p-3 flex items-center gap-3 border-l-4 border-orange-400">
+      <div class="w-9 h-9 rounded-lg bg-orange-100 flex items-center justify-center"><i class="fas fa-exclamation-triangle text-orange-500"></i></div>
+      <div><div class="text-xl font-bold text-orange-500">${hCount}</div><div class="text-xs text-gray-500">높음</div></div>
+    </div>
+    <div class="card p-3 flex items-center gap-3 border-l-4 border-yellow-400">
+      <div class="w-9 h-9 rounded-lg bg-yellow-100 flex items-center justify-center"><i class="fas fa-exclamation text-yellow-500"></i></div>
+      <div><div class="text-xl font-bold text-yellow-600">${mCount}</div><div class="text-xs text-gray-500">보통</div></div>
+    </div>
+    <div class="card p-3 flex items-center gap-3 border-l-4 border-green-500">
+      <div class="w-9 h-9 rounded-lg bg-green-100 flex items-center justify-center"><i class="fas fa-check-circle text-green-600"></i></div>
+      <div><div class="text-xl font-bold text-green-600">${lCount}</div><div class="text-xs text-gray-500">낮음</div></div>
+    </div>
+  </div>
+
+  <!-- 평가 항목 테이블 (최초와 동일 구조) -->
+  <div class="card overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-3 border-b bg-gray-50">
+      <h3 class="font-bold text-gray-800">
+        <i class="fas fa-list-ol mr-2 text-blue-500"></i>위험성 평가 항목
+        <span class="text-blue-600">(${totalItems}건)</span>
+      </h3>
+      <button class="btn-primary text-xs py-1.5 px-3"
+        onclick="showRaItemForm(${ra.id}, null, ${totalItems + 1}, 'periodic')">
+        <i class="fas fa-plus mr-1"></i>항목 추가
+      </button>
+    </div>
+
+    <!-- 범례 -->
+    <div class="px-5 py-3 bg-blue-50 border-b flex flex-wrap gap-4 text-xs text-gray-600 items-center">
+      <span class="font-semibold text-blue-700"><i class="fas fa-info-circle mr-1"></i>위험성 = 빈도 × 강도</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-red-500 inline-block"></span>매우높음(15↑)</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-orange-400 inline-block"></span>높음(9~14)</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-yellow-400 inline-block"></span>보통(4~8)</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-green-400 inline-block"></span>낮음(1~3)</span>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs" style="min-width:1100px">
+        <thead class="bg-gray-50 border-b">
+          <tr>
+            <th class="px-2 py-2 text-gray-600 font-semibold text-center w-8">No.</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-left">작업단계</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-left">유해·위험요인</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-left">사고유형</th>
+            <th colspan="3" class="px-2 py-2 text-gray-600 font-semibold text-center bg-red-50">현재 위험성(전)</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-left">감소대책</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-center">대책유형</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-center">담당자</th>
+            <th colspan="3" class="px-2 py-2 text-gray-600 font-semibold text-center bg-green-50">잔여 위험성(후)</th>
+            <th class="px-2 py-2 text-gray-600 font-semibold text-center">관리</th>
+          </tr>
+          <tr class="bg-gray-50 border-b text-xs text-gray-500">
+            <th></th><th></th><th></th><th></th>
+            <th class="px-2 py-1 text-center bg-red-50">빈도</th>
+            <th class="px-2 py-1 text-center bg-red-50">강도</th>
+            <th class="px-2 py-1 text-center bg-red-50">위험성</th>
+            <th></th><th></th><th></th>
+            <th class="px-2 py-1 text-center bg-green-50">빈도</th>
+            <th class="px-2 py-1 text-center bg-green-50">강도</th>
+            <th class="px-2 py-1 text-center bg-green-50">위험성</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="ra-items-tbody">
+          ${renderRaItemRows(items, ra.id, 'periodic')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+
+  document.getElementById('main-content').innerHTML = html;
+}
+
+// ============================================================
+// 위험성평가(수시) - Adhoc Risk Assessment
+// ============================================================
+
+// ── 메인 렌더러 ──────────────────────────────────────────────
+async function renderAdhocAssessments() {
+  showLoading();
+  try {
+    const [raRes, sitesRes] = await Promise.all([
+      API.get('/risk-assessments', { params: { assessment_type: 'adhoc' } }),
+      API.get('/sites')
+    ]);
+    sites = sitesRes.data;
+    window._adhocData = raRes.data;
+    renderAdhocContent(raRes.data);
+  } catch(e) {
+    document.getElementById('main-content').innerHTML =
+      `<div class="text-red-500 p-4">오류: ${e.message}</div>`;
+  }
+}
+
+function renderAdhocContent(list) {
+  const counts = { total: list.length, draft: 0, in_progress: 0, completed: 0, approved: 0 };
+  list.forEach(r => { if (counts[r.status] !== undefined) counts[r.status]++; });
+
+  // 연도별 그룹
+  const byYear = {};
+  list.forEach(r => {
+    const y = r.period_year || new Date(r.assessment_date || Date.now()).getFullYear() || '미설정';
+    if (!byYear[y]) byYear[y] = [];
+    byYear[y].push(r);
+  });
+  const sortedYears = Object.keys(byYear).sort((a, b) => b - a);
+
+  const html = `
+  <!-- 요약 카드 -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+    <div class="card p-4 flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-yellow-100 flex items-center justify-center">
+        <i class="fas fa-bolt text-yellow-600 text-lg"></i>
+      </div>
+      <div><div class="text-2xl font-bold text-gray-800">${counts.total}</div><div class="text-xs text-gray-500">전체 건수</div></div>
+    </div>
+    <div class="card p-4 flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-gray-100 flex items-center justify-center">
+        <i class="fas fa-pencil-alt text-gray-500 text-lg"></i>
+      </div>
+      <div><div class="text-2xl font-bold text-gray-700">${counts.draft + counts.in_progress}</div><div class="text-xs text-gray-500">진행중</div></div>
+    </div>
+    <div class="card p-4 flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-green-100 flex items-center justify-center">
+        <i class="fas fa-check-circle text-green-600 text-lg"></i>
+      </div>
+      <div><div class="text-2xl font-bold text-green-700">${counts.completed}</div><div class="text-xs text-gray-500">완료</div></div>
+    </div>
+    <div class="card p-4 flex items-center gap-3">
+      <div class="w-11 h-11 rounded-xl bg-purple-100 flex items-center justify-center">
+        <i class="fas fa-stamp text-purple-600 text-lg"></i>
+      </div>
+      <div><div class="text-2xl font-bold text-purple-700">${counts.approved}</div><div class="text-xs text-gray-500">승인됨</div></div>
+    </div>
+  </div>
+
+  <!-- 필터 & 등록 -->
+  <div class="flex flex-wrap gap-2 justify-between items-center mb-4">
+    <div class="flex gap-2 flex-wrap">
+      <select id="adhoc-site-filter" class="form-input w-auto text-sm" onchange="applyAdhocFilter()">
+        <option value="">전체 현장</option>
+        ${sites.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
+      </select>
+      <select id="adhoc-year-filter" class="form-input w-auto text-sm" onchange="applyAdhocFilter()">
+        <option value="">전체 연도</option>
+        ${sortedYears.filter(y => y !== '미설정').map(y => `<option value="${y}">${y}년</option>`).join('')}
+      </select>
+      <select id="adhoc-month-filter" class="form-input w-auto text-sm" onchange="applyAdhocFilter()">
+        <option value="">전체 월</option>
+        ${Array.from({ length: 12 }, (_, i) => i + 1).map(m => `<option value="${m}">${m}월</option>`).join('')}
+      </select>
+      <select id="adhoc-status-filter" class="form-input w-auto text-sm" onchange="applyAdhocFilter()">
+        <option value="">전체 상태</option>
+        <option value="draft">작성중</option>
+        <option value="in_progress">검토중</option>
+        <option value="completed">완료</option>
+        <option value="approved">승인됨</option>
+      </select>
+    </div>
+    <button class="btn-primary text-sm" onclick="showAdhocForm()">
+      <i class="fas fa-plus mr-1"></i>수시평가 등록
+    </button>
+  </div>
+
+  <!-- 연도별 그룹 목록 -->
+  <div id="adhoc-list-container">
+    ${sortedYears.length === 0
+      ? `<div class="card p-12 text-center text-gray-400">
+           <i class="fas fa-bolt text-4xl mb-3 block"></i>
+           등록된 수시 위험성평가가 없습니다.<br>
+           <span class="text-sm mt-1 block">[수시평가 등록] 버튼으로 첫 번째 평가를 추가하세요.</span>
+         </div>`
+      : sortedYears.map(year => renderAdhocYearGroup(year, byYear[year])).join('')
+    }
+  </div>`;
+
+  document.getElementById('main-content').innerHTML = html;
+}
+
+// ── 연도별 그룹 렌더 ─────────────────────────────────────────
+function renderAdhocYearGroup(year, list) {
+  return `
+  <div class="mb-6">
+    <div class="flex items-center gap-3 mb-3">
+      <div class="w-1 h-6 bg-yellow-500 rounded"></div>
+      <h3 class="text-base font-bold text-gray-800">${year === '미설정' ? '연도 미설정' : year + '년'}</h3>
+      <span class="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">${list.length}건</span>
+    </div>
+    <div class="card overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 border-b">
+            <tr>
+              <th class="text-center px-3 py-2.5 text-gray-600 font-semibold w-28">발생 일시</th>
+              <th class="text-left px-4 py-2.5 text-gray-600 font-semibold">공종</th>
+              <th class="text-left px-4 py-2.5 text-gray-600 font-semibold">작업내용</th>
+              <th class="text-left px-4 py-2.5 text-gray-600 font-semibold">중점위험요인</th>
+              <th class="text-center px-3 py-2.5 text-gray-600 font-semibold">빈도</th>
+              <th class="text-center px-3 py-2.5 text-gray-600 font-semibold">강도</th>
+              <th class="text-center px-3 py-2.5 text-gray-600 font-semibold">등급</th>
+              <th class="text-left px-4 py-2.5 text-gray-600 font-semibold">구체적개선대책</th>
+              <th class="text-left px-3 py-2.5 text-gray-600 font-semibold">현장</th>
+              <th class="text-left px-3 py-2.5 text-gray-600 font-semibold">평가자</th>
+              <th class="text-center px-3 py-2.5 text-gray-600 font-semibold">상태</th>
+              <th class="text-center px-3 py-2.5 text-gray-600 font-semibold">관리</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list.map(r => renderAdhocRow(r)).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderAdhocRow(r) {
+  const rLevel = RISK_LEVEL_MAP[r.risk_grade] || RISK_LEVEL_MAP.low;
+  const period = r.period_month
+    ? `${r.period_year || '?'}년 ${String(r.period_month).padStart(2, '0')}월`
+    : (r.period_year ? `${r.period_year}년` : formatDate(r.assessment_date) || '-');
+
+  return `
+  <tr class="border-b border-gray-100 hover:bg-yellow-50/30 cursor-pointer" onclick="openAdhocDetail(${r.id})">
+    <td class="px-3 py-2.5 text-center font-semibold text-yellow-700 whitespace-nowrap text-xs">${period}</td>
+    <td class="px-4 py-2.5 text-gray-700 font-medium whitespace-nowrap">${r.work_category || '-'}</td>
+    <td class="px-4 py-2.5 font-medium text-yellow-700">${r.title}</td>
+    <td class="px-4 py-2.5 text-gray-600 max-w-40"><div class="line-clamp-2">${r.key_hazard || '-'}</div></td>
+    <td class="px-3 py-2.5 text-center font-semibold text-gray-700">${r.frequency || 1}</td>
+    <td class="px-3 py-2.5 text-center font-semibold text-gray-700">${r.intensity || 1}</td>
+    <td class="px-3 py-2.5 text-center">
+      <span class="text-xs px-2 py-0.5 rounded-full font-semibold ${rLevel.cls}">${rLevel.label}</span>
+    </td>
+    <td class="px-4 py-2.5 text-gray-600 max-w-48"><div class="line-clamp-2">${r.specific_countermeasure || '-'}</div></td>
+    <td class="px-3 py-2.5 text-gray-600 text-xs whitespace-nowrap">${r.site_name}</td>
+    <td class="px-3 py-2.5 text-gray-700 whitespace-nowrap">${r.assessor}</td>
+    <td class="px-3 py-2.5 text-center">${raStatusBadge(r.status)}</td>
+    <td class="px-3 py-2.5 text-center" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-center gap-1">
+        <button class="text-blue-500 hover:text-blue-700 p-1 rounded hover:bg-blue-50"
+          onclick='showAdhocForm(${JSON.stringify(r).replace(/'/g, "&#39;")})'>
+          <i class="fas fa-edit"></i>
+        </button>
+        <button class="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50"
+          onclick="deleteAdhoc(${r.id})">
+          <i class="fas fa-trash"></i>
+        </button>
+      </div>
+    </td>
+  </tr>`;
+}
+
+// ── 필터 ────────────────────────────────────────────────────
+function applyAdhocFilter() {
+  const siteId = document.getElementById('adhoc-site-filter')?.value || '';
+  const year   = document.getElementById('adhoc-year-filter')?.value  || '';
+  const month  = document.getElementById('adhoc-month-filter')?.value || '';
+  const status = document.getElementById('adhoc-status-filter')?.value || '';
+  let filtered = window._adhocData || [];
+  if (siteId)  filtered = filtered.filter(r => String(r.site_id) === siteId);
+  if (year)    filtered = filtered.filter(r => String(r.period_year || new Date(r.assessment_date || Date.now()).getFullYear()) === year);
+  if (month)   filtered = filtered.filter(r => String(r.period_month) === month);
+  if (status)  filtered = filtered.filter(r => r.status === status);
+
+  const byYear = {};
+  filtered.forEach(r => {
+    const y = r.period_year || new Date(r.assessment_date || Date.now()).getFullYear() || '미설정';
+    if (!byYear[y]) byYear[y] = [];
+    byYear[y].push(r);
+  });
+  const sortedYears = Object.keys(byYear).sort((a, b) => b - a);
+  const container = document.getElementById('adhoc-list-container');
+  if (!container) return;
+  container.innerHTML = sortedYears.length === 0
+    ? `<div class="card p-10 text-center text-gray-400"><i class="fas fa-search text-3xl mb-2 block"></i>조건에 맞는 수시평가가 없습니다</div>`
+    : sortedYears.map(y => renderAdhocYearGroup(y, byYear[y])).join('');
+}
+
+// ── 등록/수정 폼 ─────────────────────────────────────────────
+function showAdhocForm(ra = null) {
+  const isEdit   = !!ra;
+  const initFreq  = ra?.frequency  || 1;
+  const initInt   = ra?.intensity  || 1;
+  const initGrade = ra?.risk_grade || calcRiskLevel(initFreq, initInt);
+  const curYear   = new Date().getFullYear();
+  const curMonth  = new Date().getMonth() + 1;
+
+  const freqOpts = [1, 2, 3, 4, 5].map(v =>
+    `<option value="${v}" ${initFreq == v ? 'selected' : ''}>${v} - ${{ 1: '거의없음', 2: '가끔', 3: '보통', 4: '자주', 5: '매우자주' }[v]}</option>`
+  ).join('');
+  const intOpts = [1, 2, 3, 4, 5].map(v =>
+    `<option value="${v}" ${initInt == v ? 'selected' : ''}>${v} - ${{ 1: '미미', 2: '경미', 3: '보통', 4: '심각', 5: '재해/사망' }[v]}</option>`
+  ).join('');
+
+  showModal(`
+  <div class="flex justify-between items-center mb-4">
+    <div>
+      <h3 class="text-lg font-bold text-gray-800">${isEdit ? '수시 위험성평가 수정' : '수시 위험성평가 등록'}</h3>
+      <p class="text-xs text-gray-400 mt-0.5">* 필수 입력 항목</p>
+    </div>
+    <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+  </div>
+  <form onsubmit="saveAdhoc(event, ${ra?.id || 'null'})">
+    <input type="hidden" name="assessment_type" value="adhoc">
+    <div class="space-y-3">
+
+      <!-- 발생 시점 (연도/월) -->
+      <div class="bg-yellow-50 rounded-lg p-3">
+        <div class="text-xs font-bold text-yellow-700 mb-2"><i class="fas fa-bolt mr-1"></i>수시 발생 시점</div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">발생 연도 *</label>
+            <select class="form-input text-xs" name="period_year" required>
+              ${genYearOptions(ra?.period_year || curYear)}
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">발생 월 *</label>
+            <select class="form-input text-xs" name="period_month" required>
+              ${genMonthOptions(ra?.period_month || curMonth)}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- 공종 + 작업내용 -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">공종 *</label>
+          <input class="form-input" name="work_category" value="${ra?.work_category || ''}" required placeholder="예: 철근공사, 거푸집공사">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업내용 *</label>
+          <input class="form-input" name="title" value="${ra?.title || ''}" required placeholder="예: 철근 배근 및 운반 작업">
+        </div>
+      </div>
+
+      <!-- 현장 + 작업유형 -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">현장 *</label>
+          <select class="form-input" name="site_id" required>
+            ${sites.map(s => `<option value="${s.id}" ${ra?.site_id == s.id ? 'selected' : ''}>${s.name}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업유형 *</label>
+          <input class="form-input" name="work_type" value="${ra?.work_type || ''}" required placeholder="예: 고소작업, 굴착작업">
+        </div>
+      </div>
+
+      <!-- 중점위험요인 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">중점위험요인</label>
+        <textarea class="form-input" name="key_hazard" rows="2" placeholder="예: 변경 공정 추가로 인한 낙하·충돌 위험">${ra?.key_hazard || ''}</textarea>
+      </div>
+
+      <!-- 빈도 / 강도 / 등급 -->
+      <div class="bg-red-50 rounded-lg p-3">
+        <div class="text-xs font-bold text-red-700 mb-2"><i class="fas fa-exclamation-triangle mr-1"></i>위험성 (빈도 × 강도 → 등급 자동계산)</div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">빈도(가능성) *</label>
+            <select class="form-input text-xs" name="frequency" required onchange="updateRaFormGrade(this.form)">${freqOpts}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">강도(중대성) *</label>
+            <select class="form-input text-xs" name="intensity" required onchange="updateRaFormGrade(this.form)">${intOpts}</select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-600 mb-1">등급 (자동계산)</label>
+            <div id="ra-form-grade-preview" class="mt-1 text-center">${riskLevelBadge(initGrade)}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 구체적개선대책 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">구체적개선대책</label>
+        <textarea class="form-input" name="specific_countermeasure" rows="3" placeholder="예: 안전난간 추가 설치, 작업 전 안전교육 실시">${ra?.specific_countermeasure || ''}</textarea>
+      </div>
+
+      <!-- 평가일 / 평가자 / 부서 / 상태 -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">평가일 *</label>
+          <input type="date" class="form-input" name="assessment_date" value="${ra?.assessment_date || new Date().toISOString().split('T')[0]}" required>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">평가자 *</label>
+          <input class="form-input" name="assessor" value="${ra?.assessor || ''}" required placeholder="홍길동">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">부서/팀</label>
+          <input class="form-input" name="department" value="${ra?.department || ''}" placeholder="안전관리팀">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">상태</label>
+          <select class="form-input" name="status">
+            <option value="draft"       ${(!ra || ra.status === 'draft')       ? 'selected' : ''}>작성중</option>
+            <option value="in_progress" ${ra?.status === 'in_progress'         ? 'selected' : ''}>검토중</option>
+            <option value="completed"   ${ra?.status === 'completed'           ? 'selected' : ''}>완료</option>
+            <option value="approved"    ${ra?.status === 'approved'            ? 'selected' : ''}>승인됨</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">비고</label>
+        <textarea class="form-input" name="notes" rows="2">${ra?.notes || ''}</textarea>
+      </div>
+    </div>
+    <div class="flex justify-end gap-3 mt-5 border-t pt-4">
+      <button type="button" onclick="closeModal()" class="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 text-sm">취소</button>
+      <button type="submit" class="btn-primary text-sm">${isEdit ? '수정 저장' : '등록'}</button>
+    </div>
+  </form>`);
+}
+
+async function saveAdhoc(e, id) {
+  e.preventDefault();
+  const fd   = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  try {
+    if (id) await API.put(`/risk-assessments/${id}`, body);
+    else    await API.post('/risk-assessments', body);
+    closeModal();
+    renderAdhocAssessments();
+  } catch(err) { alert('저장 실패: ' + err.message); }
+}
+
+async function deleteAdhoc(id) {
+  if (!confirm('이 수시 위험성평가를 삭제하시겠습니까?\n(모든 평가 항목도 함께 삭제됩니다)')) return;
+  try { await API.delete(`/risk-assessments/${id}`); renderAdhocAssessments(); }
+  catch(e) { alert('삭제 실패'); }
+}
+
+// ── 수시평가 상세 ─────────────────────────────────────────────
+async function openAdhocDetail(id) {
+  showLoading();
+  try {
+    const { data } = await API.get(`/risk-assessments/${id}`);
+    window._currentRa = data;
+    window._currentRaSource = 'adhoc';
+    renderAdhocDetail(data);
+  } catch(e) {
+    document.getElementById('main-content').innerHTML =
+      `<div class="text-red-500 p-4">오류: ${e.message}</div>`;
+  }
+}
+
+function renderAdhocDetail(ra) {
+  const items      = ra.items || [];
+  const totalItems = items.length;
+  const vhCount    = items.filter(i => i.before_risk_level === 'very_high').length;
+  const hCount     = items.filter(i => i.before_risk_level === 'high').length;
+  const mCount     = items.filter(i => i.before_risk_level === 'medium').length;
+  const lCount     = items.filter(i => i.before_risk_level === 'low').length;
+
+  const period = ra.period_month
+    ? `${ra.period_year}년 ${String(ra.period_month).padStart(2, '0')}월`
+    : (ra.period_year ? `${ra.period_year}년` : '');
+
+  const html = `
+  <!-- 뒤로가기 + 헤더 -->
+  <div class="flex items-center gap-3 mb-5">
+    <button onclick="renderAdhocAssessments()" class="text-gray-500 hover:text-gray-800 p-2 rounded-lg hover:bg-gray-100">
+      <i class="fas fa-arrow-left text-lg"></i>
+    </button>
+    <div class="flex-1">
+      <div class="flex items-center gap-3 flex-wrap">
+        ${period ? `<span class="bg-yellow-100 text-yellow-700 text-sm font-bold px-3 py-1 rounded-full"><i class="fas fa-bolt mr-1"></i>${period}</span>` : ''}
+        <h2 class="text-xl font-bold text-gray-800">${ra.title}</h2>
+        ${raStatusBadge(ra.status)}
+      </div>
+      <div class="text-sm text-gray-500 mt-0.5 flex flex-wrap gap-x-3 gap-y-1">
+        ${ra.work_category ? `<span><i class="fas fa-layer-group mr-1"></i>공종: <b class="text-gray-700">${ra.work_category}</b></span>` : ''}
+        <span><i class="fas fa-building mr-1"></i>${ra.site_name}</span>
+        <span><i class="fas fa-tools mr-1"></i>${ra.work_type}</span>
+        <span><i class="fas fa-calendar mr-1"></i>${formatDate(ra.assessment_date)}</span>
+        <span><i class="fas fa-user mr-1"></i>${ra.assessor}</span>
+        ${ra.key_hazard ? `<span class="text-orange-600"><i class="fas fa-exclamation-triangle mr-1"></i>중점위험: ${ra.key_hazard}</span>` : ''}
+      </div>
+    </div>
+    <button class="btn-primary text-sm" onclick='showAdhocForm(${JSON.stringify(ra).replace(/'/g, "&#39;")})'>
+      <i class="fas fa-edit mr-1"></i>정보 수정
+    </button>
+  </div>
+
+  <!-- 위험성 요약 카드 -->
+  <div class="grid grid-cols-4 gap-3 mb-5">
+    <div class="card p-3 flex items-center gap-3 border-l-4 border-red-500">
+      <div class="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center"><i class="fas fa-exclamation-circle text-red-600"></i></div>
+      <div><div class="text-xl font-bold text-red-600">${vhCount}</div><div class="text-xs text-gray-500">매우높음</div></div>
+    </div>
+    <div class="card p-3 flex items-center gap-3 border-l-4 border-orange-400">
+      <div class="w-9 h-9 rounded-lg bg-orange-100 flex items-center justify-center"><i class="fas fa-exclamation-triangle text-orange-500"></i></div>
+      <div><div class="text-xl font-bold text-orange-500">${hCount}</div><div class="text-xs text-gray-500">높음</div></div>
+    </div>
+    <div class="card p-3 flex items-center gap-3 border-l-4 border-yellow-400">
+      <div class="w-9 h-9 rounded-lg bg-yellow-100 flex items-center justify-center"><i class="fas fa-exclamation text-yellow-500"></i></div>
+      <div><div class="text-xl font-bold text-yellow-600">${mCount}</div><div class="text-xs text-gray-500">보통</div></div>
+    </div>
+    <div class="card p-3 flex items-center gap-3 border-l-4 border-green-500">
+      <div class="w-9 h-9 rounded-lg bg-green-100 flex items-center justify-center"><i class="fas fa-check-circle text-green-600"></i></div>
+      <div><div class="text-xl font-bold text-green-600">${lCount}</div><div class="text-xs text-gray-500">낮음</div></div>
+    </div>
+  </div>
+
+  <!-- 평가 항목 테이블 (최초/정기와 동일 구조) -->
+  <div class="card overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-3 border-b bg-gray-50">
+      <h3 class="font-bold text-gray-800">
+        <i class="fas fa-list-ol mr-2 text-yellow-500"></i>위험성 평가 항목
+        <span class="text-yellow-600">(${totalItems}건)</span>
+      </h3>
+      <button class="btn-primary text-xs py-1.5 px-3"
+        onclick="showRaItemForm(${ra.id}, null, ${totalItems + 1}, 'adhoc')">
+        <i class="fas fa-plus mr-1"></i>항목 추가
+      </button>
+    </div>
+
+    <!-- 범례 -->
+    <div class="px-5 py-3 bg-yellow-50 border-b flex flex-wrap gap-4 text-xs text-gray-600 items-center">
+      <span class="font-semibold text-yellow-700"><i class="fas fa-info-circle mr-1"></i>위험성 = 빈도 × 강도</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-red-500 inline-block"></span>매우높음(15↑)</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-orange-400 inline-block"></span>높음(9~14)</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-yellow-400 inline-block"></span>보통(4~8)</span>
+      <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-green-400 inline-block"></span>낮음(1~3)</span>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs" style="min-width:1100px">
+        <thead class="bg-gray-50 border-b">
+          <tr>
+            <th class="px-2 py-2 text-gray-600 font-semibold text-center w-8">No.</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-left">작업단계</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-left">유해·위험요인</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-left">사고유형</th>
+            <th colspan="3" class="px-2 py-2 text-gray-600 font-semibold text-center bg-red-50">현재 위험성(전)</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-left">감소대책</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-center">대책유형</th>
+            <th class="px-3 py-2 text-gray-600 font-semibold text-center">담당자</th>
+            <th colspan="3" class="px-2 py-2 text-gray-600 font-semibold text-center bg-green-50">잔여 위험성(후)</th>
+            <th class="px-2 py-2 text-gray-600 font-semibold text-center">관리</th>
+          </tr>
+          <tr class="bg-gray-50 border-b text-xs text-gray-500">
+            <th></th><th></th><th></th><th></th>
+            <th class="px-2 py-1 text-center bg-red-50">빈도</th>
+            <th class="px-2 py-1 text-center bg-red-50">강도</th>
+            <th class="px-2 py-1 text-center bg-red-50">위험성</th>
+            <th></th><th></th><th></th>
+            <th class="px-2 py-1 text-center bg-green-50">빈도</th>
+            <th class="px-2 py-1 text-center bg-green-50">강도</th>
+            <th class="px-2 py-1 text-center bg-green-50">위험성</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="ra-items-tbody">
+          ${renderRaItemRows(items, ra.id, 'adhoc')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+
+  document.getElementById('main-content').innerHTML = html;
+}

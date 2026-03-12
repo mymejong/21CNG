@@ -129,18 +129,19 @@ app.post('/api/workers', async (c) => {
   try {
     const result = await DB.prepare(
       `INSERT INTO workers (
-        site_id, employee_id, name, hire_date, age, career_years,
+        site_id, employee_id, name, resident_number, hire_date, age, career_years,
         job_type, company, phone,
         training_expire_date,
         pre_placement_health_check_date,
         special_health_check_date, special_health_check_expire_date,
         general_health_check_date, general_health_check_expire_date,
         safety_edu_reg_no, status
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(
       body.site_id,
       body.employee_id,
       body.name,
+      body.resident_number || null,
       body.hire_date || null,
       body.age ? Number(body.age) : null,
       body.career_years ? Number(body.career_years) : null,
@@ -169,7 +170,7 @@ app.put('/api/workers/:id', async (c) => {
   try {
     await DB.prepare(
       `UPDATE workers SET
-        site_id=?, employee_id=?, name=?, hire_date=?, age=?, career_years=?,
+        site_id=?, employee_id=?, name=?, resident_number=?, hire_date=?, age=?, career_years=?,
         job_type=?, company=?, phone=?,
         training_expire_date=?,
         pre_placement_health_check_date=?,
@@ -182,6 +183,7 @@ app.put('/api/workers/:id', async (c) => {
       body.site_id,
       body.employee_id,
       body.name,
+      body.resident_number || null,
       body.hire_date || null,
       body.age ? Number(body.age) : null,
       body.career_years ? Number(body.career_years) : null,
@@ -514,6 +516,216 @@ app.delete('/api/trainings/:id', async (c) => {
   }
 })
 
+// ==================== 위험성평가 API ====================
+// 공통 위험성 등급 계산 함수
+function calcRiskGrade(freq: number, intensity: number): string {
+  const score = freq * intensity
+  if (score >= 15) return 'very_high'
+  if (score >= 9)  return 'high'
+  if (score >= 4)  return 'medium'
+  return 'low'
+}
+
+app.get('/api/risk-assessments', async (c) => {
+  const { DB } = c.env
+  const siteId         = c.req.query('site_id')
+  const assessmentType = c.req.query('assessment_type')   // 'initial' | 'periodic'
+  const periodYear     = c.req.query('period_year')
+  const periodMonth    = c.req.query('period_month')
+  try {
+    let query = `SELECT r.*, s.name as site_name FROM risk_assessments r JOIN sites s ON r.site_id=s.id WHERE 1=1`
+    const params: any[] = []
+    if (siteId)         { query += ' AND r.site_id=?';          params.push(siteId) }
+    if (assessmentType) { query += ' AND r.assessment_type=?';  params.push(assessmentType) }
+    if (periodYear)     { query += ' AND r.period_year=?';      params.push(Number(periodYear)) }
+    if (periodMonth)    { query += ' AND r.period_month=?';     params.push(Number(periodMonth)) }
+    query += ' ORDER BY r.period_year DESC, r.period_month DESC, r.assessment_date DESC, r.created_at DESC'
+    const result = await DB.prepare(query).bind(...params).all()
+    return c.json(result.results)
+  } catch(e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+app.get('/api/risk-assessments/:id', async (c) => {
+  const { DB } = c.env
+  const id = c.req.param('id')
+  try {
+    const assessment = await DB.prepare(
+      'SELECT r.*, s.name as site_name FROM risk_assessments r JOIN sites s ON r.site_id=s.id WHERE r.id=?'
+    ).bind(id).first()
+    if (!assessment) return c.json({ error: 'Not found' }, 404)
+    const items = await DB.prepare(
+      'SELECT * FROM risk_assessment_items WHERE assessment_id=? ORDER BY no'
+    ).bind(id).all()
+    return c.json({ ...assessment, items: items.results })
+  } catch(e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+app.post('/api/risk-assessments', async (c) => {
+  const { DB } = c.env
+  const body = await c.req.json()
+  try {
+    const riskGrade = calcRiskGrade(Number(body.frequency)||1, Number(body.intensity)||1)
+    const assessmentType = body.assessment_type || 'initial'
+    const result = await DB.prepare(
+      `INSERT INTO risk_assessments
+        (site_id, title, assessment_date, assessor, department, work_type, status, notes,
+         work_category, key_hazard, frequency, intensity, risk_grade, specific_countermeasure,
+         assessment_type, period_year, period_month, period_seq, periodic_cycle)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      body.site_id, body.title, body.assessment_date, body.assessor,
+      body.department || null, body.work_type, body.status || 'draft', body.notes || null,
+      body.work_category || null, body.key_hazard || null,
+      Number(body.frequency)||1, Number(body.intensity)||1, riskGrade,
+      body.specific_countermeasure || null,
+      assessmentType,
+      body.period_year  ? Number(body.period_year)  : null,
+      body.period_month ? Number(body.period_month) : null,
+      body.period_seq   ? Number(body.period_seq)   : 1,
+      body.periodic_cycle ? Number(body.periodic_cycle) : 3
+    ).run()
+    return c.json({ id: result.meta.last_row_id, ...body, risk_grade: riskGrade })
+  } catch(e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+app.put('/api/risk-assessments/:id', async (c) => {
+  const { DB } = c.env
+  const id = c.req.param('id')
+  const body = await c.req.json()
+  try {
+    const riskGrade = calcRiskGrade(Number(body.frequency)||1, Number(body.intensity)||1)
+    await DB.prepare(
+      `UPDATE risk_assessments SET site_id=?, title=?, assessment_date=?, assessor=?, department=?,
+       work_type=?, status=?, approval_date=?, approver=?, notes=?,
+       work_category=?, key_hazard=?, frequency=?, intensity=?, risk_grade=?, specific_countermeasure=?,
+       assessment_type=?, period_year=?, period_month=?, period_seq=?, periodic_cycle=?,
+       updated_at=CURRENT_TIMESTAMP WHERE id=?`
+    ).bind(
+      body.site_id, body.title, body.assessment_date, body.assessor,
+      body.department || null, body.work_type, body.status,
+      body.approval_date || null, body.approver || null, body.notes || null,
+      body.work_category || null, body.key_hazard || null,
+      Number(body.frequency)||1, Number(body.intensity)||1, riskGrade,
+      body.specific_countermeasure || null,
+      body.assessment_type || 'initial',
+      body.period_year  ? Number(body.period_year)  : null,
+      body.period_month ? Number(body.period_month) : null,
+      body.period_seq   ? Number(body.period_seq)   : 1,
+      body.periodic_cycle ? Number(body.periodic_cycle) : 3,
+      id
+    ).run()
+    return c.json({ id, ...body, risk_grade: riskGrade })
+  } catch(e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+app.delete('/api/risk-assessments/:id', async (c) => {
+  const { DB } = c.env
+  const id = c.req.param('id')
+  try {
+    await DB.prepare('DELETE FROM risk_assessment_items WHERE assessment_id=?').bind(id).run()
+    await DB.prepare('DELETE FROM risk_assessments WHERE id=?').bind(id).run()
+    return c.json({ success: true })
+  } catch(e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+// 위험성평가 항목 CRUD
+app.post('/api/risk-assessments/:id/items', async (c) => {
+  const { DB } = c.env
+  const assessmentId = c.req.param('id')
+  const body = await c.req.json()
+  try {
+    // 빈도 × 강도 로 위험성 수준 자동 계산
+    const calcRiskLevel = (freq: number, intensity: number) => {
+      const score = freq * intensity
+      if (score >= 15) return 'very_high'
+      if (score >= 9)  return 'high'
+      if (score >= 4)  return 'medium'
+      return 'low'
+    }
+    const beforeLevel = calcRiskLevel(Number(body.before_frequency)||1, Number(body.before_intensity)||1)
+    const afterLevel  = calcRiskLevel(Number(body.after_frequency)||1,  Number(body.after_intensity)||1)
+
+    const result = await DB.prepare(
+      `INSERT INTO risk_assessment_items
+        (assessment_id, no, work_step, hazard_type, hazard_description, possible_accident,
+         before_frequency, before_intensity, before_risk_level,
+         countermeasure, countermeasure_type, responsible, due_date,
+         after_frequency, after_intensity, after_risk_level, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).bind(
+      assessmentId,
+      body.no || 1,
+      body.work_step, body.hazard_type, body.hazard_description, body.possible_accident,
+      Number(body.before_frequency)||1, Number(body.before_intensity)||1, beforeLevel,
+      body.countermeasure || null, body.countermeasure_type || null,
+      body.responsible || null, body.due_date || null,
+      Number(body.after_frequency)||1, Number(body.after_intensity)||1, afterLevel,
+      body.status || 'pending'
+    ).run()
+    return c.json({ id: result.meta.last_row_id, ...body, before_risk_level: beforeLevel, after_risk_level: afterLevel })
+  } catch(e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+app.put('/api/risk-assessments/:id/items/:itemId', async (c) => {
+  const { DB } = c.env
+  const itemId = c.req.param('itemId')
+  const body = await c.req.json()
+  try {
+    const calcRiskLevel = (freq: number, intensity: number) => {
+      const score = freq * intensity
+      if (score >= 15) return 'very_high'
+      if (score >= 9)  return 'high'
+      if (score >= 4)  return 'medium'
+      return 'low'
+    }
+    const beforeLevel = calcRiskLevel(Number(body.before_frequency)||1, Number(body.before_intensity)||1)
+    const afterLevel  = calcRiskLevel(Number(body.after_frequency)||1,  Number(body.after_intensity)||1)
+
+    await DB.prepare(
+      `UPDATE risk_assessment_items SET
+        no=?, work_step=?, hazard_type=?, hazard_description=?, possible_accident=?,
+        before_frequency=?, before_intensity=?, before_risk_level=?,
+        countermeasure=?, countermeasure_type=?, responsible=?, due_date=?,
+        after_frequency=?, after_intensity=?, after_risk_level=?, status=?
+       WHERE id=?`
+    ).bind(
+      body.no, body.work_step, body.hazard_type, body.hazard_description, body.possible_accident,
+      Number(body.before_frequency)||1, Number(body.before_intensity)||1, beforeLevel,
+      body.countermeasure || null, body.countermeasure_type || null,
+      body.responsible || null, body.due_date || null,
+      Number(body.after_frequency)||1, Number(body.after_intensity)||1, afterLevel,
+      body.status || 'pending',
+      itemId
+    ).run()
+    return c.json({ id: itemId, ...body, before_risk_level: beforeLevel, after_risk_level: afterLevel })
+  } catch(e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+app.delete('/api/risk-assessments/:id/items/:itemId', async (c) => {
+  const { DB } = c.env
+  const itemId = c.req.param('itemId')
+  try {
+    await DB.prepare('DELETE FROM risk_assessment_items WHERE id=?').bind(itemId).run()
+    return c.json({ success: true })
+  } catch(e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
 // ==================== 메인 HTML ====================
 app.get('/', (c) => {
   return c.html(getMainHTML())
@@ -622,6 +834,16 @@ function getMainHTML(): string {
       </a>
       <a href="#" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-blue-100" onclick="navigate('trainings')">
         <i class="fas fa-graduation-cap w-5"></i><span>안전교육</span>
+      </a>
+      <div class="pt-2 pb-1 px-4 text-blue-300 text-xs font-semibold uppercase tracking-wider">위험성평가</div>
+      <a href="#" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-blue-100" onclick="navigate('riskAssessments')">
+        <i class="fas fa-search w-5"></i><span>위험성평가(최초)</span>
+      </a>
+      <a href="#" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-blue-100" onclick="navigate('periodicAssessments')">
+        <i class="fas fa-sync-alt w-5"></i><span>위험성평가(정기)</span>
+      </a>
+      <a href="#" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-blue-100" onclick="navigate('adhocAssessments')">
+        <i class="fas fa-bolt w-5"></i><span>위험성평가(수시)</span>
       </a>
     </nav>
     <div class="p-4 border-t border-blue-800">
